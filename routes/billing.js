@@ -1,6 +1,7 @@
 const express  = require("express");
 const router   = express.Router();
 const supabase = require("../db/supabase");
+const { PLATFORM_NAME } = require("../lib/brand");
 
 const PLANS = {
   starter: { name: "Starter", price: 99,  maxReps: 1,   maxCalls: 500   },
@@ -22,10 +23,10 @@ router.post("/create-checkout", async (req, res) => {
     else { const customer = await stripe.customers.create({ email, metadata: { org_id } }); customerId = customer.id; if (org) await supabase.from("organizations").update({ stripe_customer_id: customerId }).eq("id", org_id); }
     const session = await stripe.checkout.sessions.create({
       customer: customerId, payment_method_types: ["card"],
-      line_items: [{ price_data: { currency: "usd", product_data: { name: `White Glove Wireless — ${planData.name}` }, unit_amount: planData.price * 100, recurring: { interval: "month" } }, quantity: 1 }],
+      line_items: [{ price_data: { currency: "usd", product_data: { name: `${PLATFORM_NAME} — ${planData.name}` }, unit_amount: planData.price * 100, recurring: { interval: "month" } }, quantity: 1 }],
       mode: "subscription",
-      success_url: `${process.env.FRONTEND_URL || "https://white-glove-frontend.vercel.app"}?billing=success`,
-      cancel_url: `${process.env.LANDING_URL || "https://whitegwireless.com"}`,
+      success_url: `${process.env.FRONTEND_URL}?billing=success`,
+      cancel_url: process.env.LANDING_URL || process.env.FRONTEND_URL,
       metadata: { org_id, plan },
       subscription_data: { trial_period_days: 14, metadata: { org_id, plan } },
     });
@@ -62,7 +63,7 @@ router.post("/portal", async (req, res) => {
     const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
     const { data: org } = await supabase.from("organizations").select("stripe_customer_id").eq("id", req.body.org_id).single();
     if (!org?.stripe_customer_id) return res.status(400).json({ error: "No billing account" });
-    const session = await stripe.billingPortal.sessions.create({ customer: org.stripe_customer_id, return_url: process.env.FRONTEND_URL || "https://white-glove-frontend.vercel.app" });
+    const session = await stripe.billingPortal.sessions.create({ customer: org.stripe_customer_id, return_url: process.env.FRONTEND_URL });
     res.json({ url: session.url });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });

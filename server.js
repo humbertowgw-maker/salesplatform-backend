@@ -1,9 +1,10 @@
-// ─── WHITE GLOVE WIRELESS · BACKEND SERVER ───────────────────────────────────
+// ─── SALES PLATFORM · BACKEND SERVER ─────────────────────────────────────────
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const rateLimit = require("express-rate-limit");
 const orgMiddleware = require("./middleware/org");
+const { PLATFORM_NAME } = require("./lib/brand");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -15,11 +16,9 @@ app.set("trust proxy", 1);
 app.use(express.json());
 app.use(cors({
   origin: function(origin, callback) {
-    // Allow all Vercel deployments, localhost, and whitegwireless.com
-    if (!origin || 
-        origin.includes('vercel.app') || 
-        origin.includes('localhost') ||
-        origin.includes('whitegwireless.com')) {
+    if (!origin ||
+        origin.includes('vercel.app') ||
+        origin.includes('localhost')) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));
@@ -63,7 +62,7 @@ app.use("/api/intel",         require("./routes/intel"));
 app.get("/health", (req, res) => {
   res.json({
     status: "ok",
-    service: "White Glove Wireless API",
+    service: `${PLATFORM_NAME} API`,
     version: "1.0.0",
     timestamp: new Date().toISOString(),
   });
@@ -82,7 +81,7 @@ app.use((err, req, res, next) => {
 
 // ── START ─────────────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
-  console.log(`\n✅ White Glove Wireless API running on port ${PORT}`);
+  console.log(`\n✅ ${PLATFORM_NAME} API running on port ${PORT}`);
   console.log(`   Health: http://localhost:${PORT}/health`);
   console.log(`   Env: ${process.env.NODE_ENV || "development"}\n`);
 });

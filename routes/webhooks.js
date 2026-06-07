@@ -143,7 +143,8 @@ router.post("/bland", async (req, res) => {
             const repName = lead.reps?.name || "our local specialist";
             const ownerName = lead.owner_name ? lead.owner_name.split(" ")[0] : "there";
 
-            const confirmMsg = `Hi ${ownerName}! This is Sofia from White Glove Wireless confirming your appointment with ${repName} on ${apptDetails.day} at ${apptDetails.time} at ${lead.business_name}. Reply YES to confirm, RESCHEDULE to pick a new time, or STOP to cancel. Looking forward to it!`;
+            const { AI_AGENT_NAME } = require("../lib/brand");
+            const confirmMsg = `Hi ${ownerName}! This is ${AI_AGENT_NAME} confirming your appointment with ${repName} on ${apptDetails.day} at ${apptDetails.time} at ${lead.business_name}. Reply YES to confirm, RESCHEDULE to pick a new time, or STOP to cancel. Looking forward to it!`;
 
             await twilio.messages.create({
               body: confirmMsg,

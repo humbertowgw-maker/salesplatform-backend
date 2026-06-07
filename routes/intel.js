@@ -4,6 +4,7 @@ const axios    = require("axios");
 const router   = express.Router();
 const supabase = require("../db/supabase");
 const { checkAndRecord } = require("../lib/usageMeter");
+const { AI_AGENT_NAME } = require("../lib/brand");
 
 // POST /api/intel/prioritize
 router.post("/prioritize", async (req, res) => {
@@ -22,7 +23,7 @@ router.post("/prioritize", async (req, res) => {
       "https://api.anthropic.com/v1/messages",
       {
         model: "claude-sonnet-4-20250514", max_tokens: 1000,
-        system: "B2B sales prioritization AI for AT&T. Score each lead 1-10 for outreach priority. Return JSON array only: [{ id, priorityScore, reason, estimatedLines, bestTimeToCall }]",
+        system: "B2B sales prioritization AI. Score each lead 1-10 for outreach priority. Return JSON array only: [{ id, priorityScore, reason, estimatedLines, bestTimeToCall }]",
         messages: [{ role: "user", content: `Score these leads:\n${JSON.stringify(leads)}` }],
       },
       { headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" }, timeout: 15000 }
@@ -43,7 +44,7 @@ router.post("/script", async (req, res) => {
       "https://api.anthropic.com/v1/messages",
       {
         model: "claude-sonnet-4-20250514", max_tokens: 800,
-        system: "Write natural AT&T B2B cold call scripts. Return JSON only: { opener, bridge, pivot, objectionHandlers: { busy, happy, noInterest, costQuestion }, close }",
+        system: "Write natural B2B cold call scripts. Return JSON only: { opener, bridge, pivot, objectionHandlers: { busy, happy, noInterest, costQuestion }, close }",
         messages: [{ role: "user", content: `Business: ${businessType}\nProvider: ${currentProvider}\nCity: ${city}\nPain point: ${painPoint}` }],
       },
       { headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" }, timeout: 12000 }
@@ -66,8 +67,8 @@ router.post("/fcc", async (req, res) => {
       "https://api.anthropic.com/v1/messages",
       {
         model: "claude-sonnet-4-20250514", max_tokens: 600,
-        system: "AT&T B2B sales strategist. Return JSON only: { summary, talkingPoints: [3 strings], primaryCompetitor, angle, competitiveScore }",
-        messages: [{ role: "user", content: `Address: ${address}\n\nProviders:\n${providerList}\n\nGive AT&T sales intel.` }],
+        system: "B2B sales strategist. Return JSON only: { summary, talkingPoints: [3 strings], primaryCompetitor, angle, competitiveScore }",
+        messages: [{ role: "user", content: `Address: ${address}\n\nProviders:\n${providerList}\n\nGive B2B competitive sales intel.` }],
       },
       { headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" }, timeout: 15000 }
     );
@@ -82,22 +83,22 @@ module.exports = router;
 router.post("/assistant", async (req, res) => {
   const { messages, lead, context } = req.body;
 
-  const systemPrompt = `You are an expert AT&T B2B sales coach and market intelligence assistant for White Glove Wireless, an authorized AT&T dealer in Western Washington.
+  const systemPrompt = `You are an expert B2B sales coach and market intelligence assistant.
 
 YOUR ROLE:
 - Guide reps on how to approach specific business prospects
-- Research current AT&T promotions and competitor pricing in real-time
+- Research competitor pricing and market conditions in real-time
 - Ask targeted questions to understand the prospect better
-- Suggest the best pitch angle based on the competitor they use
+- Suggest the best pitch angle based on what the prospect currently uses
 - Help close sales by providing specific, verified talking points
 
 CURRENT LEAD CONTEXT:
 ${lead ? `
 - Business: ${lead.business_name || "Unknown"}
-- City: ${lead.city || "Unknown"}, WA  
+- City: ${lead.city || "Unknown"}
 - Phone Type: ${lead.phone_type || "Unknown"}
-- Current Internet: ${lead.current_provider || "Unknown"}
-- Wireless Carrier: ${lead.wireless_carrier || "Unknown"}
+- Current Provider: ${lead.current_provider || "Unknown"}
+- Carrier: ${lead.wireless_carrier || "Unknown"}
 - Status: ${lead.status || "New"}
 - Call Attempts: ${lead.call_attempts || 0}
 - Owner: ${lead.owner_name || "Unknown"}
@@ -106,7 +107,7 @@ ${lead ? `
 PLATFORM TOOLS AVAILABLE:
 - Lead Search: Find businesses by type and city (Google Places, 60 results)
 - FCC Broadband Intelligence: Look up all ISPs at any address nationwide
-- AI Calls: Sofia calls businesses automatically in English or Spanish
+- AI Calls: ${AI_AGENT_NAME} calls businesses automatically in English or Spanish
 - SMS Outreach: Text follow-ups
 - Calendar: Auto-books appointments
 - Call Logs: Track all call outcomes
@@ -114,10 +115,10 @@ PLATFORM TOOLS AVAILABLE:
 
 BEHAVIOR:
 - Be conversational and ask 1-2 targeted questions to better understand the situation
-- Use web search to find current AT&T promotions and competitor pricing
+- Use web search to find current competitor pricing and promotions
 - Always give specific, actionable advice — not generic tips
-- When you find pricing data, cite it specifically ("Xfinity currently charges $X for Y Mbps")
-- Suggest the best AT&T product to lead with based on the competitor
+- When you find pricing data, cite it specifically
+- Suggest the best approach based on what the prospect currently uses
 - Help with objection handling specific to their current provider`;
 
   try {
@@ -149,7 +150,7 @@ BEHAVIOR:
     }
 
     if (!responseText) {
-      responseText = "I'm having trouble connecting to live data right now. Let me give you my best guidance based on what I know about AT&T and your market.";
+      responseText = "I'm having trouble connecting to live data right now. Let me give you my best guidance based on what I know about your market.";
     }
 
     res.json({ response: responseText, sources: claudeResult.status === "fulfilled" ? ["Claude + Web Search"] : [] });

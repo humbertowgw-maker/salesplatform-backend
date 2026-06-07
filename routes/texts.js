@@ -4,6 +4,7 @@ const router  = express.Router();
 const supabase = require("../db/supabase");
 const axios   = require("axios");
 const { checkAndRecord } = require("../lib/usageMeter");
+const { AI_AGENT_NAME } = require("../lib/brand");
 
 // Lazy-load Twilio so missing credentials don't crash the whole server
 function getTwilio() {
@@ -167,7 +168,7 @@ router.get("/logs", async (req, res) => {
 function buildFirstText({ businessName, ownerName, city, currentProvider }) {
   const name     = ownerName ? ownerName.split(" ")[0] : "there";
   const provider = currentProvider ? `your ${currentProvider} service` : "your current wireless setup";
-  return `Hi ${name}! This is Sofia with White Glove Wireless — we partner with AT&T to help small businesses in ${city} save on their internet and wireless. We tried calling ${businessName} and missed you. Worth a quick 15-min visit from our local rep to see what's available? Reply YES and we'll get something on the calendar. Reply STOP to opt out.`;
+  return `Hi ${name}! This is ${AI_AGENT_NAME} — I tried calling ${businessName} but missed you. We help small businesses in ${city} see if they're getting good value on their current services. Worth a quick 15-min visit from our local rep to take a look? Reply YES and we'll get something on the calendar. Reply STOP to opt out.`;
 }
 
 async function generateAIReply({ inboundMessage, lead, history }) {
@@ -190,7 +191,7 @@ async function generateAIReply({ inboundMessage, lead, history }) {
       {
         model:      "claude-sonnet-4-6",
         max_tokens: 200,
-        system:     `You are Sofia, a friendly outreach rep for White Glove Wireless (AT&T partner). You're texting with ${lead?.owner_name || "a business owner"} at ${lead?.business_name || "their business"} in ${lead?.city || "Washington"}. Your goal is to book an in-person appointment with their local AT&T rep Monday–Saturday. Keep replies SHORT (1–2 sentences max). Be warm, natural, never pushy. If they want to book, confirm a day and time. If they say no or ask to stop, thank them and end the conversation.`,
+        system:     `You are ${AI_AGENT_NAME}, a friendly AI outreach assistant. You're texting with ${lead?.owner_name || "a business owner"} at ${lead?.business_name || "their business"} in ${lead?.city || "their city"}. Your goal is to book an in-person appointment with their local rep Monday–Saturday. Keep replies SHORT (1–2 sentences max). Be warm, natural, never pushy. If they want to book, confirm a day and time. If they say no or ask to stop, thank them and end the conversation.`,
         messages:   conversationHistory,
       },
       {
