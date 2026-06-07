@@ -40,7 +40,16 @@ router.post("/webhook", async (req, res) => {
     if (event.type === "checkout.session.completed") {
       const { metadata, subscription: subId } = event.data.object;
       const { org_id, plan } = metadata || {};
-      if (org_id && plan && PLANS[plan]) await supabase.from("organizations").update({ plan, plan_status: "active", stripe_subscription_id: subId, max_reps: PLANS[plan].maxReps, max_calls_month: PLANS[plan].maxCalls }).eq("id", org_id);
+      if (org_id && plan && PLANS[plan]) {
+        const { data: existing } = await supabase.from("organizations").select("converted_at").eq("id", org_id).single();
+        await supabase.from("organizations").update({
+          plan, plan_status: "active",
+          stripe_subscription_id: subId,
+          max_reps: PLANS[plan].maxReps,
+          max_calls_month: PLANS[plan].maxCalls,
+          converted_at: existing?.converted_at || new Date().toISOString(),
+        }).eq("id", org_id);
+      }
     }
     if (event.type === "customer.subscription.deleted") await supabase.from("organizations").update({ plan_status: "cancelled", plan: "trial" }).eq("stripe_subscription_id", event.data.object.id);
     if (event.type === "invoice.payment_failed") await supabase.from("organizations").update({ plan_status: "past_due" }).eq("stripe_customer_id", event.data.object.customer);
@@ -60,10 +69,37 @@ router.post("/portal", async (req, res) => {
 
 router.get("/status/:org_id", async (req, res) => {
   try {
-    const { data: org } = await supabase.from("organizations").select("plan, plan_status, trial_ends_at, max_reps, max_calls_month, calls_this_month, name").eq("id", req.params.org_id).single();
+    const { data: org } = await supabase.from("organizations")
+      .select("plan, plan_status, trial_ends_at, max_reps, max_calls_month, calls_this_month, sms_this_month, ai_calls_this_month, billing_period_start, name")
+      .eq("id", req.params.org_id).single();
     if (!org) return res.status(404).json({ error: "Org not found" });
     const trialDaysLeft = org.trial_ends_at ? Math.max(0, Math.ceil((new Date(org.trial_ends_at) - new Date()) / (1000*60*60*24))) : 0;
     res.json({ ...org, trial_days_left: trialDaysLeft });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/billing/my-usage — usage counters for the authenticated org
+router.get("/my-usage", async (req, res) => {
+  if (!req.orgId) return res.status(401).json({ error: "No organization context" });
+  try {
+    const { data: org } = await supabase.from("organizations")
+      .select("plan, plan_status, calls_this_month, sms_this_month, ai_calls_this_month, billing_period_start")
+      .eq("id", req.orgId).single();
+    if (!org) return res.status(404).json({ error: "Org not found" });
+
+    const { LIMITS } = require("../lib/usageMeter");
+    const effectivePlan = org.plan_status === "active" ? (LIMITS[org.plan] ? org.plan : "trial") : "trial";
+    const limits = LIMITS[effectivePlan];
+
+    res.json({
+      plan: effectivePlan,
+      billing_period_start: org.billing_period_start,
+      usage: {
+        call:       { used: org.calls_this_month || 0,       limit: limits.call       },
+        sms:        { used: org.sms_this_month   || 0,       limit: limits.sms        },
+        ai_message: { used: org.ai_calls_this_month || 0,    limit: limits.ai_message },
+      },
+    });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

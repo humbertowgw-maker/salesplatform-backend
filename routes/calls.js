@@ -3,6 +3,7 @@ const express  = require("express");
 const axios    = require("axios");
 const router   = express.Router();
 const supabase = require("../db/supabase");
+const { checkAndRecord } = require("../lib/usageMeter");
 
 // POST /api/calls/trigger
 // Body: { lead_id } — pulls lead data, builds script, fires call
@@ -23,6 +24,9 @@ router.post("/trigger", async (req, res) => {
 
     if (leadErr || !lead) return res.status(404).json({ error: "Lead not found" });
     if (!lead.phone)      return res.status(400).json({ error: "Lead has no phone number" });
+
+    // Cap check — throws 429 if over limit, 503 if meter unavailable
+    await checkAndRecord(req.orgId, "call", { lead_id });
 
     // Format phone for Bland.ai — needs +1XXXXXXXXXX format
     const rawPhone = lead.phone.replace(/\D/g, "");
@@ -103,6 +107,9 @@ router.post("/trigger", async (req, res) => {
     });
 
   } catch (err) {
+    if (err.status === 429 || err.status === 503 || err.status === 401) {
+      return res.status(err.status).json({ error: err.message });
+    }
     console.error("Call trigger error:", err.message);
     console.error("Bland response:", JSON.stringify(err.response?.data));
     console.error("Key used (first 20):", blandKey?.slice(0, 20));

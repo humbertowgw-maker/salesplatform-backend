@@ -3,6 +3,7 @@ const express = require("express");
 const router  = express.Router();
 const supabase = require("../db/supabase");
 const axios   = require("axios");
+const { checkAndRecord } = require("../lib/usageMeter");
 
 // Lazy-load Twilio so missing credentials don't crash the whole server
 function getTwilio() {
@@ -26,7 +27,11 @@ router.post("/send", async (req, res) => {
       .eq("id", lead_id)
       .single();
 
-if (!lead?.phone) return res.status(400).json({ error: "Lead has no phone number" });
+    if (!lead?.phone) return res.status(400).json({ error: "Lead has no phone number" });
+
+    // Cap check — throws 429 if over limit, 503 if meter unavailable
+    await checkAndRecord(req.orgId, "sms", { lead_id });
+
     const rawPhone = lead.phone.replace(/\D/g, "");
     const phone = rawPhone.startsWith("1") ? `+${rawPhone}` : `+1${rawPhone}`;
 
@@ -63,6 +68,9 @@ if (!lead?.phone) return res.status(400).json({ error: "Lead has no phone number
     res.json({ success: true, twilio_sid: msg.sid, message_sent: body });
 
   } catch (err) {
+    if (err.status === 429 || err.status === 503 || err.status === 401) {
+      return res.status(err.status).json({ error: err.message });
+    }
     console.error("Text send error:", err.message);
     res.status(500).json({ error: "Failed to send text", detail: err.message });
   }

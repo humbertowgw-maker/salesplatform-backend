@@ -3,6 +3,7 @@ const express  = require("express");
 const axios    = require("axios");
 const router   = express.Router();
 const supabase = require("../db/supabase");
+const { checkAndRecord } = require("../lib/usageMeter");
 
 // POST /api/intel/prioritize
 router.post("/prioritize", async (req, res) => {
@@ -16,6 +17,7 @@ router.post("/prioritize", async (req, res) => {
       .select("id, business_name, business_type, city, current_provider, estimated_lines")
       .in("id", lead_ids);
     if (!leads?.length) return res.status(404).json({ error: "No leads found" });
+    await checkAndRecord(req.orgId, "ai_message", { endpoint: "prioritize", lead_count: leads.length });
     const aiRes = await axios.post(
       "https://api.anthropic.com/v1/messages",
       {
@@ -29,13 +31,14 @@ router.post("/prioritize", async (req, res) => {
     const scored = JSON.parse(text.replace(/```json|```/g, "").trim());
     await Promise.all(scored.map(s => supabase.from("leads").update({ priority_score: s.priorityScore }).eq("id", s.id)));
     res.json({ scored, total: scored.length });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(err.status || 500).json({ error: err.message }); }
 });
 
 // POST /api/intel/script
 router.post("/script", async (req, res) => {
   const { businessType, currentProvider, city, painPoint } = req.body;
   try {
+    await checkAndRecord(req.orgId, "ai_message", { endpoint: "script" });
     const aiRes = await axios.post(
       "https://api.anthropic.com/v1/messages",
       {
@@ -47,7 +50,7 @@ router.post("/script", async (req, res) => {
     );
     const text = aiRes.data?.content?.[0]?.text || "{}";
     res.json(JSON.parse(text.replace(/```json|```/g, "").trim()));
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) { res.status(err.status || 500).json({ error: err.message }); }
 });
 
 // POST /api/intel/fcc — AI sales intel for FCC providers
@@ -55,6 +58,7 @@ router.post("/fcc", async (req, res) => {
   const { providers, address } = req.body;
   if (!providers?.length) return res.status(400).json({ error: "providers required" });
   try {
+    await checkAndRecord(req.orgId, "ai_message", { endpoint: "fcc" });
     const providerList = providers
       .map(p => `${p.brand_name}: ${p.technology_description}, ↓${p.max_advertised_download_speed}Mbps ↑${p.max_advertised_upload_speed}Mbps`)
       .join("\n");
@@ -69,7 +73,7 @@ router.post("/fcc", async (req, res) => {
     );
     const text = aiRes.data?.content?.[0]?.text || "{}";
     res.json(JSON.parse(text.replace(/```json|```/g, "").trim()));
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
 module.exports = router;
@@ -117,6 +121,7 @@ BEHAVIOR:
 - Help with objection handling specific to their current provider`;
 
   try {
+    await checkAndRecord(req.orgId, "ai_message", { endpoint: "assistant" });
     // Run Claude (with web search) + Groq in parallel
     const [claudeResult, groqResult] = await Promise.allSettled([
       // Claude with web search for live data
@@ -150,6 +155,9 @@ BEHAVIOR:
     res.json({ response: responseText, sources: claudeResult.status === "fulfilled" ? ["Claude + Web Search"] : [] });
 
   } catch (err) {
+    if (err.status === 429 || err.status === 503 || err.status === 401) {
+      return res.status(err.status).json({ error: err.message });
+    }
     console.error("Assistant error:", err.message);
     res.status(500).json({ error: err.message });
   }
