@@ -29,6 +29,7 @@ router.post("/create-checkout", async (req, res) => {
       cancel_url: process.env.LANDING_URL || process.env.FRONTEND_URL,
       metadata: { org_id, plan },
       subscription_data: { trial_period_days: 14, metadata: { org_id, plan } },
+      payment_method_collection: "if_required",
     });
     res.json({ url: session.url });
   } catch (err) { res.status(500).json({ error: err.message }); }
