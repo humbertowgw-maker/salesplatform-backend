@@ -4,6 +4,7 @@ const express = require("express");
 const cors = require("cors");
 const rateLimit = require("express-rate-limit");
 const orgMiddleware = require("./middleware/org");
+const { authMiddleware } = require("./middleware/auth");
 const { PLATFORM_NAME } = require("./lib/brand");
 const { startScheduler } = require("./lib/scheduler");
 
@@ -48,7 +49,9 @@ const callLimiter = rateLimit({
   message: { error: "Call limit reached for this hour." },
 });
 
-// Org middleware — extracts org_id for all API routes
+// Auth middleware — verifies Supabase JWT (non-blocking, enhances security)
+app.use("/api/", authMiddleware);
+// Org middleware — extracts org_id and role for all API routes
 app.use("/api/", orgMiddleware);
 
 // ── ROUTES ────────────────────────────────────────────────────────────────────
@@ -67,6 +70,7 @@ app.use("/api/intel",         require("./routes/intel"));
 app.use("/api/automation",    require("./routes/automation"));
 app.use("/api/system",        require("./routes/system"));
 app.use("/api/analytics",     require("./routes/analytics"));
+app.use("/api/director",      require("./routes/director"));
 
 // ── HEALTH CHECK ──────────────────────────────────────────────────────────────
 app.get("/health", (req, res) => {
