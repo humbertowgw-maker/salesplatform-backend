@@ -77,8 +77,6 @@ router.post("/fcc", async (req, res) => {
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
-module.exports = router;
-
 // POST /api/intel/assistant — Multi-AI sales assistant with web search
 router.post("/assistant", async (req, res) => {
   const { messages, lead, context } = req.body;
@@ -163,3 +161,5 @@ BEHAVIOR:
     res.status(500).json({ error: err.message });
   }
 });
+
+module.exports = router;

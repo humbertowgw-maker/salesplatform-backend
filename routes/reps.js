@@ -93,8 +93,6 @@ router.post("/invite", async (req, res) => {
   }
 });
 
-module.exports = router;
-
 // DELETE /api/reps/:id
 router.delete("/:id", async (req, res) => {
   try {
@@ -106,19 +104,4 @@ router.delete("/:id", async (req, res) => {
   }
 });
 
-// PATCH /api/reps/:id — update rep
-router.patch("/:id", async (req, res) => {
-  const { name, email, phone, color, active } = req.body;
-  try {
-    const { data, error } = await supabase
-      .from("reps")
-      .update({ name, email, phone, color, active })
-      .eq("id", req.params.id)
-      .select()
-      .single();
-    if (error) throw error;
-    res.json(data);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+module.exports = router;

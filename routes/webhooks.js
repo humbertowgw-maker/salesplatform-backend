@@ -2,6 +2,21 @@
 const express  = require("express");
 const router   = express.Router();
 const supabase = require("../db/supabase");
+const telegram = require("../lib/telegram");
+
+// Retry wrapper for transient Supabase failures
+async function withRetry(fn, attempts = 3, delayMs = 1000) {
+  for (let i = 0; i < attempts; i++) {
+    try { return await fn(); }
+    catch (e) {
+      if (i === attempts - 1) throw e;
+      await new Promise(r => setTimeout(r, delayMs * (i + 1)));
+    }
+  }
+}
+
+// In-memory set to deduplicate rapid duplicate deliveries within the same process
+const _recentlyProcessed = new Set();
 
 // POST /api/webhooks/bland
 // Bland.ai calls this URL after every completed call
@@ -44,6 +59,22 @@ router.post("/bland", async (req, res) => {
 
   if (!call_id) return; // Malformed webhook
 
+  // ── Idempotency: skip duplicate deliveries ────────────────────────────────
+  if (_recentlyProcessed.has(call_id)) {
+    console.log(`[webhook] ${call_id} already processing — skipped duplicate`);
+    return;
+  }
+  _recentlyProcessed.add(call_id);
+  setTimeout(() => _recentlyProcessed.delete(call_id), 5 * 60 * 1000); // expire after 5 min
+
+  // Check DB-level idempotency: if outcome already recorded, skip fully
+  const { data: existingLog } = await supabase
+    .from("call_logs").select("id, outcome").eq("bland_call_id", call_id).maybeSingle();
+  if (existingLog?.outcome) {
+    console.log(`[webhook] ${call_id} already processed (outcome=${existingLog.outcome}) — skipped`);
+    return;
+  }
+
   const lead_id = metadata?.lead_id;
 
   try {
@@ -71,10 +102,9 @@ router.post("/bland", async (req, res) => {
     
     const outcome = detectOutcome(status, finalTranscript || "", answeredBy, duration || 0);
 
-    // ── 2. Update call log ────────────────────────────────────────────────────
-    await supabase
-      .from("call_logs")
-      .update({
+    // ── 2. Update call log (with retry) ──────────────────────────────────────
+    await withRetry(() =>
+      supabase.from("call_logs").update({
         status:           status || "completed",
         duration_seconds: Math.round(duration || 0),
         transcript:       finalTranscript,
@@ -82,10 +112,10 @@ router.post("/bland", async (req, res) => {
         recording_url:    finalRecordingUrl,
         cost_usd:         cost || null,
         answered_by:      answeredBy,
-      })
-      .eq("bland_call_id", call_id);
+      }).eq("bland_call_id", call_id)
+    );
 
-    // ── 3. Update lead status + call attempt count ────────────────────────────
+    // ── 3. Update lead status + call attempt count (with retry) ──────────────
     if (lead_id) {
       // Get current call count
       const { data: lead } = await supabase.from("leads").select("call_attempts, call_count, owner_name").eq("id", lead_id).single();
@@ -100,10 +130,11 @@ router.post("/bland", async (req, res) => {
       if (outcome === "callback_requested")  newStatus = "Follow Up";
       if (outcome === "appointment_booked")  newStatus = "Appt Set";
 
-      await supabase
-        .from("leads")
-        .update({ status: newStatus, call_attempts: callAttempts, call_count: callCount })
-        .eq("id", lead_id);
+      await withRetry(() =>
+        supabase.from("leads")
+          .update({ status: newStatus, call_attempts: callAttempts, call_count: callCount })
+          .eq("id", lead_id)
+      );
     }
 
     // ── 4. Auto-create appointment if one was booked ──────────────────────────
@@ -133,6 +164,15 @@ router.post("/bland", async (req, res) => {
         });
 
         console.log(`✅ Auto-booked appointment for ${metadata?.business_name}`);
+
+        // Telegram notification
+        telegram.sendAppointmentBooked({
+          businessName: lead?.business_name || metadata?.business_name,
+          repName:      lead?.reps?.name || metadata?.rep_name || "Unassigned",
+          day:          apptDetails.day,
+          time:         apptDetails.time,
+          city:         lead?.city,
+        });
 
         // ── Send confirmation text ────────────────────────────────────────────
         if (lead?.phone && process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN) {

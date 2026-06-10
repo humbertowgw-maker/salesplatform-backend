@@ -106,7 +106,7 @@ router.patch("/:id", async (req, res) => {
   const allowed = [
     "status", "rep_id", "territory_id", "owner_name", "owner_email",
     "phone", "current_provider", "wireless_carrier", "notes", "priority_score",
-    "fcc_checked", "fcc_providers", "phone_type",
+    "fcc_checked", "fcc_providers", "phone_type", "linkedin_url", "owner_title", "website",
   ];
   const updates = {};
   allowed.forEach(key => {
@@ -183,8 +183,56 @@ router.post("/enrich/:id", async (req, res) => {
       } catch(e) {}
     }
 
+    // ── Apollo.io People Match ────────────────────────────────────────────────
+    // Uses credits — only call if we're missing email or owner
+    if (process.env.APOLLO_API_KEY && (!lead.owner_email || !lead.owner_name)) {
+      try {
+        const apolloBody = { organization_name: lead.business_name };
+        // Split owner name into first/last if we have one
+        if (lead.owner_name) {
+          const parts = lead.owner_name.trim().split(/\s+/);
+          apolloBody.first_name = parts[0];
+          if (parts.length > 1) apolloBody.last_name = parts.slice(1).join(" ");
+        }
+        // Try to extract domain from website if stored
+        if (lead.website) {
+          try { apolloBody.domain = new URL(lead.website).hostname.replace(/^www\./, ""); } catch(_) {}
+        }
+
+        const apolloRes = await axios.post(
+          "https://api.apollo.io/api/v1/people/match",
+          apolloBody,
+          {
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${process.env.APOLLO_API_KEY}`,
+            },
+            timeout: 12000,
+          }
+        );
+
+        const person = apolloRes.data?.person;
+        if (person) {
+          if (!lead.owner_name && person.name) updates.owner_name = person.name;
+          if (!lead.owner_email && person.email) updates.owner_email = person.email;
+          if (person.linkedin_url) updates.linkedin_url = person.linkedin_url;
+          if (person.title && !updates.owner_title) updates.owner_title = person.title;
+          // First mobile phone from Apollo
+          const mobilePhone = person.phone_numbers?.find(p => p.type === "mobile")?.sanitized_number;
+          if (mobilePhone && !lead.phone) {
+            updates.phone = mobilePhone;
+            updates.phone_type = "mobile";
+          }
+          console.log(`[enrich] Apollo matched: ${person.name} <${person.email}>`);
+        }
+      } catch (e) {
+        // 422 = no match found (normal), 429 = rate limited
+        if (e.response?.status !== 422) console.warn("[enrich] Apollo error:", e.message);
+      }
+    }
+
     // Owner lookup via AI knowledge (no web search needed for common WA restaurants)
-    if (!lead.owner_name && process.env.ANTHROPIC_API_KEY) {
+    if (!lead.owner_name && !updates.owner_name && process.env.ANTHROPIC_API_KEY) {
       try {
         const aiRes = await axios.post(
           "https://api.anthropic.com/v1/messages",

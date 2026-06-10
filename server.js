@@ -5,6 +5,7 @@ const cors = require("cors");
 const rateLimit = require("express-rate-limit");
 const orgMiddleware = require("./middleware/org");
 const { PLATFORM_NAME } = require("./lib/brand");
+const { startScheduler } = require("./lib/scheduler");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -14,11 +15,17 @@ app.set("trust proxy", 1);
 
 // ── MIDDLEWARE ────────────────────────────────────────────────────────────────
 app.use(express.json());
+const ALLOWED_ORIGINS = [
+  process.env.FRONTEND_URL,
+  process.env.LANDING_URL,
+  "http://localhost:3000",
+  "http://localhost:3001",
+].filter(Boolean);
+
 app.use(cors({
   origin: function(origin, callback) {
-    if (!origin ||
-        origin.includes('vercel.app') ||
-        origin.includes('localhost')) {
+    // Allow same-origin requests (no origin header) and listed origins only
+    if (!origin || ALLOWED_ORIGINS.includes(origin)) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));
@@ -57,6 +64,9 @@ app.use("/api/calls",         callLimiter, require("./routes/calls"));
 app.use("/api/texts",         require("./routes/texts"));
 app.use("/api/webhooks",      require("./routes/webhooks"));
 app.use("/api/intel",         require("./routes/intel"));
+app.use("/api/automation",    require("./routes/automation"));
+app.use("/api/system",        require("./routes/system"));
+app.use("/api/analytics",     require("./routes/analytics"));
 
 // ── HEALTH CHECK ──────────────────────────────────────────────────────────────
 app.get("/health", (req, res) => {
@@ -84,4 +94,5 @@ app.listen(PORT, () => {
   console.log(`\n✅ ${PLATFORM_NAME} API running on port ${PORT}`);
   console.log(`   Health: http://localhost:${PORT}/health`);
   console.log(`   Env: ${process.env.NODE_ENV || "development"}\n`);
+  startScheduler();
 });
