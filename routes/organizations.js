@@ -2,6 +2,25 @@
 const express  = require("express");
 const router   = express.Router();
 const supabase = require("../db/supabase");
+const { PRESETS, getPreset, buildConfig } = require("../lib/industryPresets");
+
+async function requireOrgAdmin(req, res) {
+  const orgId = req.headers["x-org-id"];
+  const email = req.headers["x-user-email"];
+  if (!orgId || !email) {
+    res.status(401).json({ error: "Missing org/user context" });
+    return null;
+  }
+
+  const { data: role } = await supabase
+    .from("user_roles").select("role").eq("email", email).eq("org_id", orgId).maybeSingle();
+  if (!["admin","super_admin"].includes(role?.role)) {
+    res.status(403).json({ error: "Admin only" });
+    return null;
+  }
+
+  return { orgId, email, role: role.role };
+}
 
 // GET /api/organizations/me — get current org
 router.get("/me", async (req, res) => {
@@ -29,17 +48,30 @@ router.get("/me", async (req, res) => {
 
 // POST /api/organizations — create new org (dealer signup)
 router.post("/", async (req, res) => {
-  const { name, owner_email, dealer_code, user_id } = req.body;
+  const { name, owner_email, dealer_code, user_id, industry_key = "general_crm" } = req.body;
   if (!name || !owner_email) return res.status(400).json({ error: "name and owner_email required" });
 
   try {
+    const preset = getPreset(industry_key);
     // Create slug from name
     const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") 
       + "-" + Math.random().toString(36).slice(2, 6);
 
     const { data: org, error } = await supabase
       .from("organizations")
-      .insert({ name, slug, owner_email, dealer_code, plan: "trial", plan_status: "trial" })
+      .insert({
+        name,
+        slug,
+        owner_email,
+        dealer_code,
+        plan: "trial",
+        plan_status: "trial",
+        industry_key: preset.key,
+        enabled_modules: preset.modules,
+        custom_wording: preset.wording,
+        pipeline_stages: preset.pipelineStages,
+        research_tools: preset.researchTools,
+      })
       .select()
       .single();
 
@@ -53,21 +85,6 @@ router.post("/", async (req, res) => {
     }
 
     res.json({ org });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// PATCH /api/organizations/:id — update org settings
-router.patch("/:id", async (req, res) => {
-  const { name, dealer_code, logo_url, primary_color } = req.body;
-  try {
-    const { data, error } = await supabase
-      .from("organizations")
-      .update({ name, dealer_code, logo_url, primary_color, updated_at: new Date() })
-      .eq("id", req.params.id)
-      .select()
-      .single();
-    if (error) throw error;
-    res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -87,6 +104,11 @@ router.get("/all", async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// GET /api/organizations/presets — available app-factory industry presets
+router.get("/presets", async (req, res) => {
+  res.json({ presets: Object.values(PRESETS) });
+});
+
 // GET /api/organizations/brand — returns org brand config (no auth, uses x-org-id header)
 router.get("/brand", async (req, res) => {
   const orgId = req.headers["x-org-id"];
@@ -104,22 +126,137 @@ router.get("/brand", async (req, res) => {
 
 // PATCH /api/organizations/brand — update org brand (admin only)
 router.patch("/brand", async (req, res) => {
-  const orgId = req.headers["x-org-id"];
-  const email = req.headers["x-user-email"];
-  if (!orgId || !email) return res.status(401).json({ error: "Missing org/user context" });
-
-  // Verify admin role
-  const { data: role } = await supabase
-    .from("user_roles").select("role").eq("email", email).eq("org_id", orgId).maybeSingle();
-  if (!["admin","super_admin"].includes(role?.role)) return res.status(403).json({ error: "Admin only" });
+  const ctx = await requireOrgAdmin(req, res);
+  if (!ctx) return;
 
   const { brand_name, ai_name, tagline, logo_url, primary_color } = req.body;
   try {
     const { data, error } = await supabase
       .from("organizations")
       .update({ brand_name, ai_name, tagline, logo_url, primary_color, updated_at: new Date() })
-      .eq("id", orgId)
+      .eq("id", ctx.orgId)
       .select("brand_name, ai_name, tagline, logo_url, primary_color, name")
+      .single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /api/organizations/config — current tenant app-factory config
+router.get("/config", async (req, res) => {
+  const orgId = req.headers["x-org-id"];
+  if (!orgId) return res.json(buildConfig());
+
+  try {
+    const { data, error } = await supabase
+      .from("organizations")
+      .select("industry_key, enabled_modules, custom_wording, pipeline_stages, research_tools")
+      .eq("id", orgId)
+      .maybeSingle();
+    if (error) throw error;
+    res.json(buildConfig(data || {}));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PATCH /api/organizations/config — update current tenant app-factory config
+router.patch("/config", async (req, res) => {
+  const ctx = await requireOrgAdmin(req, res);
+  if (!ctx) return;
+
+  const currentPreset = getPreset(req.body.industry_key);
+  const updates = {
+    industry_key: currentPreset.key,
+    enabled_modules: Array.isArray(req.body.enabled_modules) ? req.body.enabled_modules : currentPreset.modules,
+    custom_wording: req.body.custom_wording && typeof req.body.custom_wording === "object" ? req.body.custom_wording : currentPreset.wording,
+    pipeline_stages: Array.isArray(req.body.pipeline_stages) ? req.body.pipeline_stages : currentPreset.pipelineStages,
+    research_tools: Array.isArray(req.body.research_tools) ? req.body.research_tools : currentPreset.researchTools,
+    updated_at: new Date(),
+  };
+
+  try {
+    const { data, error } = await supabase
+      .from("organizations")
+      .update(updates)
+      .eq("id", ctx.orgId)
+      .select("industry_key, enabled_modules, custom_wording, pipeline_stages, research_tools")
+      .single();
+    if (error) throw error;
+    res.json(buildConfig(data));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /api/organizations/apply-preset — reset config to a preset
+router.post("/apply-preset", async (req, res) => {
+  const ctx = await requireOrgAdmin(req, res);
+  if (!ctx) return;
+
+  const preset = getPreset(req.body.industry_key);
+  try {
+    const { data, error } = await supabase
+      .from("organizations")
+      .update({
+        industry_key: preset.key,
+        enabled_modules: preset.modules,
+        custom_wording: preset.wording,
+        pipeline_stages: preset.pipelineStages,
+        research_tools: preset.researchTools,
+        updated_at: new Date(),
+      })
+      .eq("id", ctx.orgId)
+      .select("industry_key, enabled_modules, custom_wording, pipeline_stages, research_tools")
+      .single();
+    if (error) throw error;
+    res.json(buildConfig(data));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /api/organizations/feature-requests — tenant feature request list
+router.get("/feature-requests", async (req, res) => {
+  if (!req.orgId) return res.status(401).json({ error: "No organization context" });
+  try {
+    const { data, error } = await supabase
+      .from("feature_requests")
+      .select("*")
+      .eq("org_id", req.orgId)
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    res.json({ requests: data || [] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /api/organizations/feature-requests — submit tenant feature request
+router.post("/feature-requests", async (req, res) => {
+  if (!req.orgId) return res.status(401).json({ error: "No organization context" });
+  const { title, description, module, priority = "normal" } = req.body;
+  if (!title) return res.status(400).json({ error: "title is required" });
+
+  try {
+    const { data, error } = await supabase
+      .from("feature_requests")
+      .insert({
+        org_id: req.orgId,
+        requested_by: req.userEmail || req.headers["x-user-email"] || null,
+        title,
+        description,
+        module,
+        priority,
+      })
+      .select()
+      .single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// PATCH /api/organizations/:id — update org settings
+router.patch("/:id", async (req, res) => {
+  const { name, dealer_code, logo_url, primary_color } = req.body;
+  try {
+    const { data, error } = await supabase
+      .from("organizations")
+      .update({ name, dealer_code, logo_url, primary_color, updated_at: new Date() })
+      .eq("id", req.params.id)
+      .select()
       .single();
     if (error) throw error;
     res.json(data);
