@@ -67,10 +67,18 @@ app.use("/api/calls",         callLimiter, require("./routes/calls"));
 app.use("/api/texts",         require("./routes/texts"));
 app.use("/api/webhooks",      require("./routes/webhooks"));
 app.use("/api/intel",         require("./routes/intel"));
+app.use("/api/speak",         require("./routes/speak"));
 app.use("/api/automation",    require("./routes/automation"));
 app.use("/api/system",        require("./routes/system"));
-app.use("/api/analytics",     require("./routes/analytics"));
-app.use("/api/director",      require("./routes/director"));
+app.use("/api/analytics",      require("./routes/analytics"));
+app.use("/api/director",       require("./routes/director"));
+app.use("/api/notifications",  require("./routes/notifications"));
+app.use("/api/activity",       require("./routes/activity"));
+app.use("/api/employees",      require("./routes/employees"));
+app.use("/api/news",           require("./routes/news"));
+app.use("/api/field",          require("./routes/field"));
+app.use("/api/scoring",        require("./routes/scoring"));
+app.use("/api/documents",      require("./routes/documents"));
 
 // ── HEALTH CHECK ──────────────────────────────────────────────────────────────
 app.get("/health", (req, res) => {

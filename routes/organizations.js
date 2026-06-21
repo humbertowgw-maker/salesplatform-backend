@@ -66,6 +66,7 @@ router.post("/", async (req, res) => {
         dealer_code,
         plan: "trial",
         plan_status: "trial",
+        trial_ends_at: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
         industry_key: preset.key,
         enabled_modules: preset.modules,
         custom_wording: preset.wording,
@@ -207,6 +208,16 @@ router.post("/apply-preset", async (req, res) => {
       .single();
     if (error) throw error;
     res.json(buildConfig(data));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /api/organizations/me/onboarding-complete — mark onboarding done
+router.post("/me/onboarding-complete", async (req, res) => {
+  const orgId = req.headers["x-org-id"];
+  if (!orgId) return res.status(401).json({ error: "No org context" });
+  try {
+    await supabase.from("organizations").update({ onboarding_complete: true }).eq("id", orgId);
+    res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
