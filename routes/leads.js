@@ -105,7 +105,7 @@ router.post("/bulk", async (req, res) => {
 router.patch("/:id", async (req, res) => {
   const allowed = [
     "status", "rep_id", "territory_id", "owner_name", "owner_email",
-    "phone", "current_provider", "wireless_carrier", "notes", "priority_score",
+    "phone", "current_provider", "notes", "priority_score",
     "fcc_checked", "fcc_providers", "phone_type", "linkedin_url", "owner_title", "website",
   ];
   const updates = {};
