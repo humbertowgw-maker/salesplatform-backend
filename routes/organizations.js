@@ -72,6 +72,7 @@ router.post("/", async (req, res) => {
         custom_wording: preset.wording,
         pipeline_stages: preset.pipelineStages,
         research_tools: preset.researchTools,
+        onboarding_complete: false,
       })
       .select()
       .single();
