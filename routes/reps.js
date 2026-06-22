@@ -68,8 +68,10 @@ router.patch("/:id", async (req, res) => {
 
 // POST /api/reps/invite — invite a rep via magic-link email (admin only)
 router.post("/invite", async (req, res) => {
-  const { email, name, org_id, redirectTo } = req.body;
+  const { email, name, redirectTo } = req.body;
+  const orgId = req.headers["x-org-id"] || req.body.org_id;
   if (!email) return res.status(400).json({ error: "email is required" });
+  if (!orgId) return res.status(400).json({ error: "org context required" });
   try {
     // 1) Send the magic-link invite (admin op — needs the service key)
     const { data, error } = await supabase.auth.admin.inviteUserByEmail(
@@ -83,7 +85,7 @@ router.post("/invite", async (req, res) => {
     if (userId) {
       const { error: roleErr } = await supabase
         .from("user_roles")
-        .insert({ user_id: userId, email, role: "rep", org_id: org_id || null });
+        .insert({ user_id: userId, email, role: "rep", org_id: orgId });
       if (roleErr) throw roleErr;
     }
 

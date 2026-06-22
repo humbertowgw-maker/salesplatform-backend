@@ -80,9 +80,10 @@ router.post("/", async (req, res) => {
 
     // Assign user to org as admin
     if (user_id) {
-      await supabase.from("user_roles").upsert({
+      const { error: roleErr } = await supabase.from("user_roles").upsert({
         user_id, email: owner_email, role: "admin", org_id: org.id,
       }, { onConflict: "user_id" });
+      if (roleErr) throw roleErr;
     }
 
     res.json({ org });
