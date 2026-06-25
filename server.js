@@ -4,7 +4,8 @@ const express = require("express");
 const cors = require("cors");
 const rateLimit = require("express-rate-limit");
 const orgMiddleware = require("./middleware/org");
-const { authMiddleware } = require("./middleware/auth");
+const { authMiddleware, requireAuth } = require("./middleware/auth");
+const trialGuard    = require("./middleware/trialGuard");
 const { PLATFORM_NAME } = require("./lib/brand");
 const { startScheduler } = require("./lib/scheduler");
 
@@ -16,6 +17,7 @@ app.set("trust proxy", 1);
 
 // ── MIDDLEWARE ────────────────────────────────────────────────────────────────
 app.use(express.json());
+app.use(express.urlencoded({ extended: false }));
 const ALLOWED_ORIGINS = [
   process.env.FRONTEND_URL,
   process.env.LANDING_URL,
@@ -53,6 +55,15 @@ const callLimiter = rateLimit({
 app.use("/api/", authMiddleware);
 // Org middleware — extracts org_id and role for all API routes
 app.use("/api/", orgMiddleware);
+// Block unauthenticated requests on all API routes except webhooks and public org info
+app.use("/api/", (req, res, next) => {
+  const PUBLIC_PREFIXES = ["/webhooks", "/texts/inbound", "/organizations/brand", "/organizations/presets", "/organizations/config"];
+  if (PUBLIC_PREFIXES.some(p => req.path === p || req.path.startsWith(p + "/"))) return next();
+  requireAuth(req, res, next);
+});
+
+// Trial / cancellation gate — runs after auth so req.orgId + req.isSuperAdmin are set
+app.use("/api/", trialGuard);
 
 // ── ROUTES ────────────────────────────────────────────────────────────────────
 app.use("/api/organizations", require("./routes/organizations"));
@@ -98,7 +109,7 @@ app.use((req, res) => {
 // ── ERROR HANDLER ─────────────────────────────────────────────────────────────
 app.use((err, req, res, next) => {
   console.error("Server error:", err.message);
-  res.status(500).json({ error: "Internal server error", detail: err.message });
+  res.status(500).json({ error: "Internal server error" });
 });
 
 // ── START ─────────────────────────────────────────────────────────────────────
