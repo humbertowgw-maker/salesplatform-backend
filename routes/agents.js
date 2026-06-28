@@ -226,4 +226,46 @@ router.post("/:id/run", async (req, res) => {
   res.json({ ok: true, message: `${agent.name} triggered` });
 });
 
+// ── GET/PATCH /api/agents/sophia-config — per-org Sophia dialer settings ─────
+// Stored inside organizations.custom_wording._sophia (no migration needed)
+router.get("/sophia-config", async (req, res) => {
+  if (!req.orgId) return res.status(401).json({ error: "No org context" });
+  const { data } = await supabase.from("organizations").select("custom_wording").eq("id", req.orgId).maybeSingle();
+  const sophia = data?.custom_wording?._sophia || {};
+  res.json({ auto_dial: sophia.auto_dial ?? false, language: sophia.language || "auto" });
+});
+
+router.patch("/sophia-config", async (req, res) => {
+  if (!req.orgId) return res.status(401).json({ error: "No org context" });
+  const { data: org } = await supabase.from("organizations").select("custom_wording").eq("id", req.orgId).maybeSingle();
+  const current = org?.custom_wording || {};
+  const updated = { ...current, _sophia: { ...(current._sophia || {}), ...req.body } };
+  const { error } = await supabase.from("organizations").update({ custom_wording: updated }).eq("id", req.orgId);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true, ...(updated._sophia || {}) });
+});
+
+// ── POST /api/agents/language-profiles — upsert a profile ────────────────────
+router.post("/language-profiles", async (req, res) => {
+  const { area_code, language, timezone, region_name } = req.body;
+  if (!area_code) return res.status(400).json({ error: "area_code required" });
+  const { data, error } = await supabase
+    .from("language_profiles")
+    .upsert(
+      { area_code: String(area_code), language: language || "en", timezone: timezone || "America/Los_Angeles", region_name: region_name || null },
+      { onConflict: "area_code" }
+    )
+    .select()
+    .single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// ── DELETE /api/agents/language-profiles/:area_code ────────────────────────────
+router.delete("/language-profiles/:area_code", async (req, res) => {
+  const { error } = await supabase.from("language_profiles").delete().eq("area_code", req.params.area_code);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ deleted: true });
+});
+
 module.exports = router;

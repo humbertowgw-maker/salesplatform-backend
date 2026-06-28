@@ -113,6 +113,131 @@ router.post("/applicants/:id/screen", async (req, res) => {
   }
 });
 
+// POST /api/hiring/applicants/:id/send-offer — generate + deliver offer letter
+router.post("/applicants/:id/send-offer", async (req, res) => {
+  const { data: applicant } = await supabase
+    .from("applicants")
+    .select("*")
+    .eq("id", req.params.id)
+    .eq("org_id", req.orgId)
+    .maybeSingle();
+
+  if (!applicant) return res.status(404).json({ error: "Applicant not found" });
+
+  const { data: org } = await supabase
+    .from("organizations").select("name").eq("id", req.orgId).maybeSingle();
+  const orgName = org?.name || PLATFORM_NAME;
+
+  // Generate offer letter via Claude
+  let offerLetter;
+  if (process.env.ANTHROPIC_API_KEY) {
+    try {
+      const Anthropic = require("@anthropic-ai/sdk");
+      const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+      const msg = await client.messages.create({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 500,
+        messages: [{
+          role: "user",
+          content: `Write a brief, warm offer letter for a ${applicant.position || "Sales Representative"} position at ${orgName}. Candidate name: ${applicant.name}. Under 180 words. Start with "Dear ${applicant.name.split(" ")[0]}," and end with "${orgName} Hiring Team". Professional, no salary details.`,
+        }],
+      });
+      offerLetter = msg.content[0]?.text || null;
+    } catch (e) {
+      console.warn("[hiring] Claude offer letter failed:", e.message);
+    }
+  }
+
+  if (!offerLetter) {
+    const firstName = applicant.name.split(" ")[0];
+    offerLetter = `Dear ${firstName},\n\nCongratulations! We are thrilled to offer you the ${applicant.position || "Sales Representative"} position at ${orgName}.\n\nYour skills and enthusiasm impressed our team throughout the interview process, and we believe you'll be a valuable addition.\n\nPlease reply to confirm your acceptance and we will send you onboarding details.\n\nWe look forward to welcoming you aboard!\n\nBest regards,\n${orgName} Hiring Team`;
+  }
+
+  // Update applicant record
+  await supabase
+    .from("applicants")
+    .update({ status: "offered", offer_sent_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+    .eq("id", applicant.id);
+
+  // Send SMS
+  if (applicant.phone) {
+    try {
+      const { sendSms } = require("../lib/sms");
+      const firstName = applicant.name.split(" ")[0];
+      await sendSms({
+        toPhone: applicant.phone,
+        body: `Hi ${firstName}! Great news — ${orgName} is excited to offer you the ${applicant.position || "Sales Rep"} position. Check your email for your offer letter. We look forward to hearing from you!`,
+        source: "hiring",
+      });
+    } catch (e) { console.warn("[hiring] Offer SMS failed:", e.message); }
+  }
+
+  // Send email via Gmail (hiring calendar token)
+  let emailSent = false;
+  if (applicant.email) {
+    try {
+      const { getOrgClients, sendOfferEmail } = require("../lib/hiringCalendar");
+      const clients = await getOrgClients(req.orgId);
+      if (clients?.gmail) {
+        await sendOfferEmail(clients.gmail, { toEmail: applicant.email, applicantName: applicant.name, orgName, offerLetter });
+        emailSent = true;
+      }
+    } catch (e) { console.warn("[hiring] Offer email failed:", e.message); }
+  }
+
+  res.json({ success: true, offer_sent: true, email_sent: emailSent });
+});
+
+// POST /api/hiring/applicants/:id/hire — create rep profile + send Supabase invite
+router.post("/applicants/:id/hire", async (req, res) => {
+  const { data: applicant } = await supabase
+    .from("applicants")
+    .select("*")
+    .eq("id", req.params.id)
+    .eq("org_id", req.orgId)
+    .maybeSingle();
+
+  if (!applicant) return res.status(404).json({ error: "Applicant not found" });
+
+  let userId = null;
+
+  // Invite user to platform via Supabase
+  if (applicant.email) {
+    try {
+      const { data: inviteData, error: inviteErr } = await supabase.auth.admin.inviteUserByEmail(
+        applicant.email,
+        { data: { org_id: req.orgId, role: "rep" } }
+      );
+      if (inviteErr) console.warn("[hiring] Supabase invite failed:", inviteErr.message);
+      else userId = inviteData?.user?.id || null;
+    } catch (e) { console.warn("[hiring] Invite error:", e.message); }
+  }
+
+  // Create user_roles entry
+  if (applicant.email) {
+    const roleRecord = { email: applicant.email, role: "rep", org_id: req.orgId };
+    if (userId) roleRecord.user_id = userId;
+    const { error: roleErr } = await supabase.from("user_roles").insert(roleRecord);
+    if (roleErr) console.warn("[hiring] user_roles insert failed:", roleErr.message);
+  }
+
+  // Create reps entry
+  const { data: repData, error: repErr } = await supabase
+    .from("reps")
+    .insert({ name: applicant.name, email: applicant.email || null, phone: applicant.phone || null, color: "#6366f1" })
+    .select()
+    .single();
+  if (repErr) console.warn("[hiring] reps insert failed:", repErr.message);
+
+  // Mark applicant as hired
+  await supabase
+    .from("applicants")
+    .update({ status: "hired", hired_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+    .eq("id", applicant.id);
+
+  res.json({ success: true, hired: true, rep_id: repData?.id || null, invite_sent: !!userId });
+});
+
 // ── Google Calendar OAuth ─────────────────────────────────────────────────────
 
 // GET /api/hiring/google/connect — returns OAuth URL
