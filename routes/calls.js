@@ -6,6 +6,7 @@ const supabase = require("../db/supabase");
 const { checkAndRecord } = require("../lib/usageMeter");
 const { buildCallScript } = require("../lib/callScript");
 const { isWithinCallingWindow } = require("../lib/timezone");
+const { ensureSophiaPathway } = require("../lib/blandPathway");
 
 // POST /api/calls/trigger
 // Body: { lead_id } — pulls lead data, builds script, fires call
@@ -36,45 +37,60 @@ router.post("/trigger", async (req, res) => {
 
     const repName = lead.reps?.name || "our local specialist";
 
-    // Build the call task / script
-    const task = buildCallScript({
+    const requestData = {
       businessName:    lead.business_name,
-      ownerName:       lead.owner_name,
-      city:            lead.city,
-      currentProvider: lead.current_provider,
+      ownerName:       lead.owner_name || "there",
+      city:            lead.city || "",
+      currentProvider: lead.current_provider || "your current provider",
       repName,
-    });
+    };
 
-    // Fire the call via Bland.ai
-    const language = req.body.language || "auto"; // auto-detects English/Spanish/etc
+    // Prefer pathway (proper branching) over flat task prompt
+    const pathwayId = await ensureSophiaPathway();
+
+    const language = req.body.language || "auto";
+
+    const blandPayload = pathwayId
+      ? {
+          phone_number:           phone,
+          pathway_id:             pathwayId,
+          voice:                  "maya",
+          max_duration:           12,
+          wait_for_greeting:      true,
+          record:                 true,
+          interruption_threshold: 100,
+          webhook: `${process.env.WEBHOOK_BASE_URL}/api/webhooks/bland`,
+          metadata: { lead_id, business_name: lead.business_name, rep_name: repName },
+          request_data:           requestData,
+        }
+      : {
+          // Fallback: flat task prompt (no pathway)
+          phone_number:           phone,
+          task: buildCallScript({
+            businessName:    lead.business_name,
+            ownerName:       lead.owner_name,
+            city:            lead.city,
+            currentProvider: lead.current_provider,
+            repName,
+          }),
+          model:                  "enhanced",
+          language,
+          voice:                  "maya",
+          max_duration:           12,
+          wait_for_greeting:      true,
+          record:                 true,
+          interruption_threshold: 100,
+          temperature:            0.7,
+          webhook: `${process.env.WEBHOOK_BASE_URL}/api/webhooks/bland`,
+          metadata: { lead_id, business_name: lead.business_name, rep_name: repName },
+          request_data:           requestData,
+        };
+
     const blandRes = await axios.post(
       "https://us.api.bland.ai/v1/calls",
+      blandPayload,
       {
-        phone_number:           phone,
-        task,
-        model:                  "enhanced",
-        language,
-        voice:                  "maya",
-        max_duration:           12,
-        wait_for_greeting:      true,
-        record:                 true,
-        interruption_threshold: 100,
-        temperature:            0.7,
-        webhook: `${process.env.WEBHOOK_BASE_URL}/api/webhooks/bland`,
-        metadata: { lead_id, business_name: lead.business_name, rep_name: repName },
-        request_data: {
-          businessName:    lead.business_name,
-          ownerName:       lead.owner_name || "there",
-          city:            lead.city,
-          currentProvider: lead.current_provider,
-          repName,
-        },
-      },
-      {
-        headers: {
-          "Content-Type": "application/json",
-          "authorization": blandKey,
-        },
+        headers: { "Content-Type": "application/json", "authorization": blandKey },
         timeout: 30000,
       }
     );
@@ -159,23 +175,39 @@ router.post("/bulk-trigger", async (req, res) => {
       const phone = rawPhone.startsWith("1") ? `+${rawPhone}` : `+1${rawPhone}`;
       const repName = lead.reps?.name || "our local specialist";
 
-      const task = buildCallScript({
+      const bulkRequestData = {
         businessName:    lead.business_name,
-        ownerName:       lead.owner_name,
-        city:            lead.city,
-        currentProvider: lead.current_provider,
+        ownerName:       lead.owner_name || "there",
+        city:            lead.city || "",
+        currentProvider: lead.current_provider || "your current provider",
         repName,
-      });
+      };
+
+      const bulkPathwayId = await ensureSophiaPathway();
+
+      const bulkPayload = bulkPathwayId
+        ? {
+            phone_number: phone, pathway_id: bulkPathwayId,
+            voice: "maya", max_duration: 12, wait_for_greeting: true,
+            record: true, interruption_threshold: 100,
+            webhook: `${process.env.WEBHOOK_BASE_URL}/api/webhooks/bland`,
+            metadata: { lead_id, business_name: lead.business_name, rep_name: repName },
+            request_data: bulkRequestData,
+          }
+        : {
+            phone_number: phone,
+            task: buildCallScript({ businessName: lead.business_name, ownerName: lead.owner_name, city: lead.city, currentProvider: lead.current_provider, repName }),
+            model: "enhanced", language,
+            voice: "maya", max_duration: 12, wait_for_greeting: true,
+            record: true, interruption_threshold: 100, temperature: 0.7,
+            webhook: `${process.env.WEBHOOK_BASE_URL}/api/webhooks/bland`,
+            metadata: { lead_id, business_name: lead.business_name, rep_name: repName },
+            request_data: bulkRequestData,
+          };
 
       const blandRes = await axios.post(
         "https://us.api.bland.ai/v1/calls",
-        {
-          phone_number: phone, task, model: "enhanced", language,
-          voice: "maya", max_duration: 12, wait_for_greeting: true,
-          record: true, interruption_threshold: 100, temperature: 0.7,
-          webhook: `${process.env.WEBHOOK_BASE_URL}/api/webhooks/bland`,
-          metadata: { lead_id, business_name: lead.business_name, rep_name: repName },
-        },
+        bulkPayload,
         { headers: { "Content-Type": "application/json", authorization: blandKey }, timeout: 30000 }
       );
 

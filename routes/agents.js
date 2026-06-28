@@ -3,6 +3,7 @@ const express  = require("express");
 const axios    = require("axios");
 const router   = express.Router();
 const supabase = require("../db/supabase");
+const { ensureSophiaPathway, updateSophiaPathway, buildSophiaPathwaySpec, clearPathwayCache } = require("../lib/blandPathway");
 
 // ── GET /api/agents — list all agents ────────────────────────────────────────
 router.get("/", async (req, res) => {
@@ -333,6 +334,58 @@ router.patch("/sophia-config", async (req, res) => {
   const { error } = await supabase.from("organizations").update({ custom_wording: updated }).eq("id", req.orgId);
   if (error) return res.status(500).json({ error: error.message });
   res.json({ ok: true, ...(updated._sophia || {}) });
+});
+
+// ── POST /api/agents/sophia-pathway — create or refresh the Bland.ai pathway ──
+// Creates the pathway on Bland if it doesn't exist yet, or updates it (refresh=true).
+// Stores the resulting pathway_id back into sophia config so it survives restarts.
+router.post("/sophia-pathway", async (req, res) => {
+  if (!req.orgId) return res.status(401).json({ error: "No org context" });
+
+  const { refresh = false } = req.body;
+
+  try {
+    const { data: org } = await supabase.from("organizations").select("custom_wording").eq("id", req.orgId).maybeSingle();
+    const sophia = org?.custom_wording?._sophia || {};
+
+    let pathwayId = process.env.BLAND_PATHWAY_ID || sophia.pathway_id || null;
+
+    if (refresh && pathwayId) {
+      // Update existing pathway with latest node/edge content
+      clearPathwayCache();
+      await updateSophiaPathway(pathwayId);
+      return res.json({ ok: true, pathway_id: pathwayId, action: "updated" });
+    }
+
+    if (!pathwayId) {
+      // Create fresh pathway
+      clearPathwayCache();
+      pathwayId = await ensureSophiaPathway();
+      if (!pathwayId) return res.status(502).json({ error: "Bland.ai pathway creation failed — check BLAND_KEY and Bland account" });
+
+      // Persist pathway_id in org config
+      const current = org?.custom_wording || {};
+      const updated = { ...current, _sophia: { ...sophia, pathway_id: pathwayId } };
+      await supabase.from("organizations").update({ custom_wording: updated }).eq("id", req.orgId);
+    }
+
+    res.json({ ok: true, pathway_id: pathwayId, action: "created" });
+  } catch (err) {
+    console.error("[sophia-pathway]", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /api/agents/sophia-pathway — return pathway spec (for preview/debug) ──
+router.get("/sophia-pathway", async (req, res) => {
+  if (!req.orgId) return res.status(401).json({ error: "No org context" });
+  const { data: org } = await supabase.from("organizations").select("custom_wording").eq("id", req.orgId).maybeSingle();
+  const sophia = org?.custom_wording?._sophia || {};
+  const pathwayId = process.env.BLAND_PATHWAY_ID || sophia.pathway_id || null;
+  res.json({
+    pathway_id: pathwayId,
+    spec:       buildSophiaPathwaySpec(),
+  });
 });
 
 // ── POST /api/agents/language-profiles — upsert a profile ────────────────────

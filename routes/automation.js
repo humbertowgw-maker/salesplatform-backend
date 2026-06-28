@@ -6,6 +6,7 @@ const supabase = require("../db/supabase");
 const telegram = require("../lib/telegram");
 const { buildCallScript } = require("../lib/callScript");
 const { isWithinCallingWindow } = require("../lib/timezone");
+const { ensureSophiaPathway } = require("../lib/blandPathway");
 
 // In-memory state for scheduler (resets on restart — cheap and sufficient)
 const state = {
@@ -96,28 +97,39 @@ async function runFollowups({ orgId = null } = {}) {
         const rawPhone = lead.phone.replace(/\D/g, "");
         const phone    = rawPhone.startsWith("1") ? `+${rawPhone}` : `+1${rawPhone}`;
 
-        const task = buildCallScript({
+        const autoRequestData = {
           businessName:    lead.business_name,
-          ownerName:       lead.owner_name,
-          city:            lead.city,
-          currentProvider: lead.current_provider,
+          ownerName:       lead.owner_name || "there",
+          city:            lead.city || "",
+          currentProvider: lead.current_provider || "your current provider",
           repName,
-        });
+        };
+
+        const autoPathwayId = await ensureSophiaPathway();
+
+        const autoPayload = autoPathwayId
+          ? {
+              phone_number: phone, pathway_id: autoPathwayId,
+              voice: "maya", max_duration: 12, wait_for_greeting: true, record: true,
+              interruption_threshold: 100,
+              webhook: `${process.env.WEBHOOK_BASE_URL}/api/webhooks/bland`,
+              metadata: { lead_id: lead.id, business_name: lead.business_name, rep_name: repName, automated: true },
+              request_data: autoRequestData,
+            }
+          : {
+              phone_number: phone,
+              task: buildCallScript({ businessName: lead.business_name, ownerName: lead.owner_name, city: lead.city, currentProvider: lead.current_provider, repName }),
+              model: "enhanced", language: "auto",
+              voice: "maya", max_duration: 12, wait_for_greeting: true, record: true,
+              interruption_threshold: 100, temperature: 0.7,
+              webhook: `${process.env.WEBHOOK_BASE_URL}/api/webhooks/bland`,
+              metadata: { lead_id: lead.id, business_name: lead.business_name, rep_name: repName, automated: true },
+              request_data: autoRequestData,
+            };
 
         const blandRes = await axios.post(
           "https://us.api.bland.ai/v1/calls",
-          {
-            phone_number: phone, task, model: "enhanced", language: "auto",
-            voice: "maya", max_duration: 12, wait_for_greeting: true, record: true,
-            interruption_threshold: 100, temperature: 0.7,
-            webhook: `${process.env.WEBHOOK_BASE_URL}/api/webhooks/bland`,
-            metadata: {
-              lead_id:   lead.id,
-              business_name: lead.business_name,
-              rep_name:  repName,
-              automated: true,
-            },
-          },
+          autoPayload,
           { headers: { "Content-Type": "application/json", authorization: blandKey }, timeout: 30000 }
         );
 
