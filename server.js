@@ -57,7 +57,7 @@ app.use("/api/", authMiddleware);
 app.use("/api/", orgMiddleware);
 // Block unauthenticated requests on all API routes except webhooks and public org info
 app.use("/api/", (req, res, next) => {
-  const PUBLIC_PREFIXES = ["/webhooks", "/texts/inbound", "/organizations/brand", "/organizations/presets", "/organizations/config"];
+  const PUBLIC_PREFIXES = ["/webhooks", "/texts/inbound", "/organizations/brand", "/organizations/presets", "/organizations/config", "/hiring/google/callback"];
   if (PUBLIC_PREFIXES.some(p => req.path === p || req.path.startsWith(p + "/"))) return next();
   requireAuth(req, res, next);
 });
@@ -91,6 +91,7 @@ app.use("/api/field",          require("./routes/field"));
 app.use("/api/scoring",        require("./routes/scoring"));
 app.use("/api/documents",      require("./routes/documents"));
 app.use("/api/agents",         require("./routes/agents"));
+app.use("/api/hiring",         require("./routes/hiring"));
 
 // ── HEALTH CHECK ──────────────────────────────────────────────────────────────
 app.get("/health", (req, res) => {

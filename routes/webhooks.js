@@ -306,4 +306,139 @@ function extractAppointmentDetails(transcript) {
   return { day, time };
 }
 
+// ── Bland.ai hiring phone screen webhook ──────────────────────────────────────
+// POST /api/webhooks/bland-hiring
+// Called after a phone screen completes. If passed → schedule Google Calendar interview,
+// send applicant SMS + email, update applicant status.
+router.post("/bland-hiring", async (req, res) => {
+  const expectedSecret = process.env.BLAND_WEBHOOK_SECRET;
+  if (!expectedSecret || req.query.secret !== expectedSecret) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  res.status(200).json({ received: true });
+
+  const payload = req.body;
+  const { call_id, status, metadata } = payload;
+  if (!call_id || !metadata?.applicant_id) return;
+
+  const transcript = payload.concatenated_transcript || payload.transcript || "";
+  const duration   = payload.corrected_duration
+    ? Number(payload.corrected_duration)
+    : payload.call_length ? Math.round(Number(payload.call_length) * 60) : 0;
+
+  const { data: applicant } = await supabase
+    .from("applicants")
+    .select("*")
+    .eq("id", metadata.applicant_id)
+    .maybeSingle();
+
+  if (!applicant) return;
+
+  // Determine screen result
+  const answeredBy = payload.answered_by || "unknown";
+  let screenResult = "no_answer";
+  if (answeredBy === "human" && duration >= 60) {
+    const t = transcript.toLowerCase();
+    const notInterested =
+      t.includes("not interested") || t.includes("no thanks") ||
+      t.includes("no thank you") || t.includes("don't call");
+    screenResult = notInterested ? "failed" : "passed";
+  } else if (answeredBy === "voicemail" || status === "voicemail") {
+    screenResult = "no_answer";
+  }
+
+  // Update transcript + screen result
+  await supabase
+    .from("applicants")
+    .update({
+      screen_result:     screenResult,
+      screen_transcript: transcript || null,
+      status:            screenResult === "passed" ? "interview_scheduling" : "screened",
+      updated_at:        new Date().toISOString(),
+    })
+    .eq("id", applicant.id);
+
+  console.log(`[hiring] ${applicant.name} screen result: ${screenResult}`);
+
+  if (screenResult !== "passed") return;
+
+  // ── Schedule interview ───────────────────────────────────────────────────────
+  try {
+    const { getOrgClients, findFreeSlot, createInterviewEvent, sendInterviewEmail } = require("../lib/hiringCalendar");
+    const { sendSms } = require("../lib/sms");
+
+    const clients = await getOrgClients(applicant.org_id);
+    if (!clients) {
+      console.warn("[hiring] No calendar connected for org — skipping auto-schedule");
+      await supabase
+        .from("applicants")
+        .update({ status: "screened", updated_at: new Date().toISOString() })
+        .eq("id", applicant.id);
+      return;
+    }
+
+    const { calendar, gmail, calendarId } = clients;
+
+    // Find next open slot
+    const slot = await findFreeSlot(calendar, calendarId);
+    if (!slot) {
+      console.warn("[hiring] No free slot found in next 14 days");
+      return;
+    }
+
+    // Create calendar event
+    const { eventId, meetLink } = await createInterviewEvent(calendar, calendarId, {
+      applicantName:  applicant.name,
+      applicantEmail: applicant.email,
+      slot,
+    });
+
+    // Persist to DB
+    await supabase
+      .from("applicants")
+      .update({
+        status:          "interview_scheduled",
+        interview_at:    slot.start.toISOString(),
+        google_event_id: eventId,
+        meet_link:       meetLink || null,
+        updated_at:      new Date().toISOString(),
+      })
+      .eq("id", applicant.id);
+
+    const formattedTime = slot.start.toLocaleString("en-US", {
+      weekday: "long", month: "long", day: "numeric",
+      hour: "numeric", minute: "2-digit", hour12: true, timeZone: "America/Los_Angeles",
+    });
+
+    // SMS to applicant
+    if (applicant.phone) {
+      const firstName = applicant.name.split(" ")[0];
+      const smsBody = `Hi ${firstName}! Great news — you passed your phone screen for the Sales Rep position. Your interview is scheduled for ${formattedTime} (PT). Join via Google Meet: ${meetLink || "(link coming)"}. Reply STOP to opt out.`;
+      try {
+        await sendSms({ toPhone: applicant.phone, body: smsBody, source: "hiring" });
+      } catch (smsErr) {
+        console.warn("[hiring] SMS failed:", smsErr.message);
+      }
+    }
+
+    // Email to applicant
+    if (applicant.email && gmail) {
+      try {
+        await sendInterviewEmail(gmail, {
+          toEmail:      applicant.email,
+          applicantName: applicant.name,
+          interviewAt:   slot.start,
+          meetLink,
+        });
+      } catch (emailErr) {
+        console.warn("[hiring] Email failed:", emailErr.message);
+      }
+    }
+
+    console.log(`[hiring] Interview scheduled for ${applicant.name} at ${formattedTime}`);
+  } catch (err) {
+    console.error("[hiring] Schedule error:", err.message);
+  }
+});
+
 module.exports = router;
