@@ -1,5 +1,6 @@
 // routes/agents.js — Agent registry CRUD + lifecycle management
 const express  = require("express");
+const axios    = require("axios");
 const router   = express.Router();
 const supabase = require("../db/supabase");
 
@@ -224,6 +225,95 @@ router.post("/:id/run", async (req, res) => {
   });
 
   res.json({ ok: true, message: `${agent.name} triggered` });
+});
+
+// ── POST /api/agents/:id/generate-build-plan — Claude-powered build plan ─────
+router.post("/:id/generate-build-plan", async (req, res) => {
+  const { id } = req.params;
+  if (!process.env.ANTHROPIC_API_KEY) {
+    return res.status(500).json({ error: "ANTHROPIC_API_KEY not configured" });
+  }
+
+  const { data: agent, error: fetchErr } = await supabase
+    .from("agent_registry")
+    .select("id, name, description, category, slug")
+    .eq("id", id)
+    .single();
+
+  if (fetchErr || !agent) return res.status(404).json({ error: "Agent not found" });
+
+  try {
+    const prompt = `You are a senior software architect for a white-label CRM sales platform built on Node.js/Express + Supabase + React.
+
+Generate a detailed build plan for this AI agent:
+
+Name: ${agent.name}
+Slug: ${agent.slug}
+Category: ${agent.category}
+Description: ${agent.description || "No description provided"}
+
+Return ONLY valid JSON (no markdown, no explanation) matching this schema:
+{
+  "phases": [
+    {
+      "phase": 1,
+      "title": "string",
+      "steps": ["string"],
+      "estimated_hours": number,
+      "dependencies": ["string"]
+    }
+  ],
+  "total_estimated_hours": number,
+  "risk_level": "low" | "medium" | "high",
+  "risks": ["string"],
+  "success_criteria": ["string"],
+  "suggested_cron": "string or null"
+}`;
+
+    const aiRes = await axios.post(
+      "https://api.anthropic.com/v1/messages",
+      {
+        model:      "claude-sonnet-4-6",
+        max_tokens: 1024,
+        messages:   [{ role: "user", content: prompt }],
+      },
+      {
+        headers: {
+          "Content-Type":    "application/json",
+          "x-api-key":       process.env.ANTHROPIC_API_KEY,
+          "anthropic-version": "2023-06-01",
+        },
+        timeout: 30000,
+      }
+    );
+
+    const text = aiRes.data?.content?.[0]?.text || "{}";
+    let buildPlan;
+    try {
+      buildPlan = JSON.parse(text.replace(/```json|```/g, "").trim());
+    } catch (parseErr) {
+      return res.status(502).json({ error: "AI returned invalid JSON", raw: text.slice(0, 500) });
+    }
+
+    const { error: updateErr } = await supabase
+      .from("agent_registry")
+      .update({ build_plan_json: buildPlan })
+      .eq("id", id);
+
+    if (updateErr) throw updateErr;
+
+    await supabase.from("agent_audit_log").insert({
+      agent_id:     id,
+      action:       "build_plan_generated",
+      performed_by: req.user?.email || "admin",
+      details:      { phases: buildPlan.phases?.length || 0, risk_level: buildPlan.risk_level },
+    });
+
+    res.json({ ok: true, build_plan: buildPlan });
+  } catch (err) {
+    console.error(`[agents] Build plan generation failed for ${agent.slug}:`, err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ── GET/PATCH /api/agents/sophia-config — per-org Sophia dialer settings ─────

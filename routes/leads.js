@@ -2,6 +2,7 @@
 const express  = require("express");
 const router   = express.Router();
 const supabase = require("../db/supabase");
+const { enrichLeadTimezone } = require("../lib/timezone");
 
 // GET /api/leads — list all leads (with rep + territory join)
 router.get("/", async (req, res) => {
@@ -259,6 +260,67 @@ router.post("/enrich/:id", async (req, res) => {
     }
 
     res.json({ enriched: updates, lead_id: req.params.id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/leads/enrich-timezone/:id — set timezone + language + calling window
+router.post("/enrich-timezone/:id", async (req, res) => {
+  try {
+    const { data: lead, error: fetchErr } = await supabase
+      .from("leads")
+      .select("id, state, phone, territory_id")
+      .eq("id", req.params.id)
+      .single();
+
+    if (fetchErr || !lead) return res.status(404).json({ error: "Lead not found" });
+
+    const updates = await enrichLeadTimezone(lead);
+    const { error } = await supabase.from("leads").update(updates).eq("id", lead.id);
+    if (error) throw error;
+
+    res.json({ lead_id: lead.id, ...updates });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/leads/enrich-timezone-batch — bulk-enrich leads (NULL or stale window)
+// Body: { limit?: number, force?: boolean }
+router.post("/enrich-timezone-batch", async (req, res) => {
+  const limit = Math.min(parseInt(req.body?.limit || "200"), 500);
+  const force = req.body?.force === true;
+
+  try {
+    let q = supabase
+      .from("leads")
+      .select("id, state, phone, territory_id")
+      .limit(limit);
+
+    if (req.orgId) q = q.eq("org_id", req.orgId);
+
+    if (!force) {
+      // Only leads with no timezone set (new leads)
+      q = q.is("timezone", null);
+    }
+
+    const { data: leads, error: fetchErr } = await q;
+    if (fetchErr) throw fetchErr;
+
+    let enriched = 0, failed = 0;
+    for (const lead of leads || []) {
+      try {
+        const updates = await enrichLeadTimezone(lead);
+        await supabase.from("leads").update(updates).eq("id", lead.id);
+        enriched++;
+      } catch (e) {
+        console.error(`[enrich-tz] lead ${lead.id}:`, e.message);
+        failed++;
+      }
+    }
+
+    res.json({ enriched, failed, total: leads?.length || 0 });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

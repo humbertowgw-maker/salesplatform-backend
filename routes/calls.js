@@ -5,6 +5,7 @@ const router   = express.Router();
 const supabase = require("../db/supabase");
 const { checkAndRecord } = require("../lib/usageMeter");
 const { buildCallScript } = require("../lib/callScript");
+const { isWithinCallingWindow } = require("../lib/timezone");
 
 // POST /api/calls/trigger
 // Body: { lead_id } — pulls lead data, builds script, fires call
@@ -143,6 +144,12 @@ router.post("/bulk-trigger", async (req, res) => {
 
       if (leadErr || !lead || !lead.phone) {
         results.push({ lead_id, status: "skipped", reason: leadErr ? leadErr.message : "no phone" });
+        continue;
+      }
+
+      // Skip if outside the lead's calling window (respects territory hours + TZ)
+      if (!isWithinCallingWindow(lead)) {
+        results.push({ lead_id, status: "skipped", reason: "outside_calling_window" });
         continue;
       }
 

@@ -5,6 +5,7 @@ const router   = express.Router();
 const supabase = require("../db/supabase");
 const telegram = require("../lib/telegram");
 const { buildCallScript } = require("../lib/callScript");
+const { isWithinCallingWindow } = require("../lib/timezone");
 
 // In-memory state for scheduler (resets on restart — cheap and sufficient)
 const state = {
@@ -34,7 +35,7 @@ async function runFollowups({ orgId = null } = {}) {
     const FOLLOWUP_STATUSES = ["No Answer", "Voicemail", "Follow Up", "Called"];
     let query = supabase
       .from("leads")
-      .select("id, business_name, phone, status, call_attempts, rep_id, city, owner_name, current_provider")
+      .select("id, business_name, phone, status, call_attempts, rep_id, city, owner_name, current_provider, state, calling_window_start, calling_window_end")
       .in("status", FOLLOWUP_STATUSES)
       .not("phone", "is", null)
       .order("call_attempts", { ascending: true })
@@ -79,6 +80,13 @@ async function runFollowups({ orgId = null } = {}) {
       const lead = toCall[i];
       try {
         if (!blandKey) { skipped++; continue; }
+
+        // Skip if outside the lead's calling window (respects territory hours + TZ)
+        if (!isWithinCallingWindow(lead)) {
+          skipped++;
+          console.log(`[automation] ${lead.business_name}: outside calling window, skipping`);
+          continue;
+        }
 
         const { data: rep } = lead.rep_id
           ? await supabase.from("reps").select("name").eq("id", lead.rep_id).single()
