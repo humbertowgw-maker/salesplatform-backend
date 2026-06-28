@@ -191,6 +191,15 @@ router.post("/:id/run", async (req, res) => {
       } else if (agent.slug === "eod-report") {
         const { runEodReport } = require("../lib/agents/eodReport");
         await runEodReport(orgId);
+      } else if (agent.slug === "appt-confirmation") {
+        const { runAppointmentConfirmation } = require("../lib/agents/appointmentConfirmation");
+        await runAppointmentConfirmation(orgId);
+      } else if (agent.slug === "sms-followup") {
+        const { runSmsFollowUp } = require("../lib/agents/smsFollowUp");
+        await runSmsFollowUp(orgId);
+      } else if (agent.slug === "review-request") {
+        const { runReviewRequest } = require("../lib/agents/reviewRequest");
+        await runReviewRequest(orgId);
       }
       await supabase.from("agent_audit_log").insert({
         agent_id: id, action: "run_complete", performed_by: "system",
