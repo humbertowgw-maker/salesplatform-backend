@@ -28,11 +28,13 @@ router.get("/audit", async (req, res) => {
 
 // ── GET /api/agents/queue-health — latest queue health snapshot ───────────────
 router.get("/queue-health", async (req, res) => {
-  const { data, error } = await supabase
+  let q = supabase
     .from("queue_health_log")
     .select("*")
     .order("created_at", { ascending: false })
     .limit(10);
+  if (req.orgId) q = q.eq("org_id", req.orgId);
+  const { data, error } = await q;
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
@@ -40,29 +42,33 @@ router.get("/queue-health", async (req, res) => {
 // ── GET /api/agents/eod-reports — recent EOD reports ─────────────────────────
 router.get("/eod-reports", async (req, res) => {
   const limit = parseInt(req.query.limit || "7");
-  const { data, error } = await supabase
+  let q = supabase
     .from("eod_reports")
     .select("*")
     .order("date", { ascending: false })
     .limit(limit);
+  if (req.orgId) q = q.eq("org_id", req.orgId);
+  const { data, error } = await q;
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
 
 // ── GET /api/agents/suggestions — improvement suggestions ─────────────────────
 router.get("/suggestions", async (req, res) => {
-  const { data, error } = await supabase
+  let q = supabase
     .from("improvement_suggestions")
     .select("*")
     .is("actioned_at", null)
     .order("priority")
     .order("created_at", { ascending: false })
     .limit(20);
+  if (req.orgId) q = q.eq("org_id", req.orgId);
+  const { data, error } = await q;
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
 
-// ── GET /api/agents/language-profiles — language profiles ─────────────────────
+// ── GET /api/agents/language-profiles — language profiles (global, no org scope) ──
 router.get("/language-profiles", async (req, res) => {
   const { data, error } = await supabase
     .from("language_profiles")
@@ -75,13 +81,15 @@ router.get("/language-profiles", async (req, res) => {
 
 // ── GET /api/agents/call-queue — Sophia dialer queue ─────────────────────────
 router.get("/call-queue", async (req, res) => {
-  const { data, error } = await supabase
+  let q = supabase
     .from("call_queue")
     .select("*, lead:lead_id(business_name, phone, city)")
     .eq("status", "pending")
     .order("priority")
     .order("created_at")
     .limit(50);
+  if (req.orgId) q = q.eq("org_id", req.orgId);
+  const { data, error } = await q;
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
@@ -89,10 +97,12 @@ router.get("/call-queue", async (req, res) => {
 // ── PATCH /api/agents/suggestions/:id/action — mark suggestion actioned ───────
 router.patch("/suggestions/:id/action", async (req, res) => {
   const { id } = req.params;
-  const { error } = await supabase
+  let q = supabase
     .from("improvement_suggestions")
     .update({ actioned_at: new Date().toISOString() })
     .eq("id", id);
+  if (req.orgId) q = q.eq("org_id", req.orgId);
+  const { error } = await q;
   if (error) return res.status(500).json({ error: error.message });
   res.json({ ok: true });
 });
