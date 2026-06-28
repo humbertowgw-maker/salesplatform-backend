@@ -2,6 +2,7 @@
 const express  = require("express");
 const router   = express.Router();
 const supabase = require("../db/supabase");
+const { requireAuth, requireAdmin } = require("../middleware/auth");
 
 // GET /api/reps
 router.get("/", async (req, res) => {
@@ -67,7 +68,7 @@ router.patch("/:id", async (req, res) => {
 });
 
 // POST /api/reps/invite — invite a rep via magic-link email (admin only)
-router.post("/invite", async (req, res) => {
+router.post("/invite", requireAuth, requireAdmin, async (req, res) => {
   const { email, name, redirectTo } = req.body;
   const orgId = req.headers["x-org-id"] || req.body.org_id;
   if (!email) return res.status(400).json({ error: "email is required" });

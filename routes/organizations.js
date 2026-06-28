@@ -6,7 +6,7 @@ const { PRESETS, getPreset, buildConfig } = require("../lib/industryPresets");
 
 async function requireOrgAdmin(req, res) {
   const orgId = req.headers["x-org-id"];
-  const email = req.headers["x-user-email"];
+  const email = req.verifiedEmail || req.headers["x-user-email"];
   if (!orgId || !email) {
     res.status(401).json({ error: "Missing org/user context" });
     return null;
@@ -263,6 +263,9 @@ router.post("/feature-requests", async (req, res) => {
 
 // PATCH /api/organizations/:id — update org settings
 router.patch("/:id", async (req, res) => {
+  const ctx = await requireOrgAdmin(req, res);
+  if (!ctx) return;
+  if (ctx.orgId !== req.params.id) return res.status(403).json({ error: "Cannot modify another organization" });
   const { name, dealer_code, logo_url, primary_color } = req.body;
   try {
     const { data, error } = await supabase

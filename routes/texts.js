@@ -6,6 +6,20 @@ const axios   = require("axios");
 const { checkAndRecord } = require("../lib/usageMeter");
 const { AI_AGENT_NAME } = require("../lib/brand");
 
+function validateTwilioSignature(req, res, next) {
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  if (!authToken) {
+    console.error("TWILIO_AUTH_TOKEN not set — rejecting inbound webhook");
+    return res.status(503).json({ error: "Webhook not configured" });
+  }
+  const twilio = require("twilio");
+  const signature = req.headers["x-twilio-signature"] || "";
+  const url = `${req.protocol}://${req.get("host")}${req.originalUrl}`;
+  const valid = twilio.validateRequest(authToken, signature, url, req.body);
+  if (!valid) return res.status(403).json({ error: "Invalid Twilio signature" });
+  next();
+}
+
 // Lazy-load Twilio so missing credentials don't crash the whole server
 function getTwilio() {
   if (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN) {
@@ -77,9 +91,9 @@ router.post("/send", async (req, res) => {
   }
 });
 
-// POST /api/webhooks/twilio/inbound — receives inbound replies
+// POST /api/texts/inbound — receives inbound replies
 // (Wire this up in your Twilio console: Messaging → Phone Numbers → Webhook URL)
-router.post("/inbound", async (req, res) => {
+router.post("/inbound", validateTwilioSignature, async (req, res) => {
   const { From, Body, To } = req.body;
 
   try {

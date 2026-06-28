@@ -21,6 +21,10 @@ const _recentlyProcessed = new Set();
 // POST /api/webhooks/bland
 // Bland.ai calls this URL after every completed call
 router.post("/bland", async (req, res) => {
+  const expectedSecret = process.env.BLAND_WEBHOOK_SECRET;
+  if (!expectedSecret || req.query.secret !== expectedSecret) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
   // Always respond 200 immediately — Bland.ai will retry if you don't
   res.status(200).json({ received: true });
 

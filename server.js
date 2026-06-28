@@ -90,6 +90,7 @@ app.use("/api/news",           require("./routes/news"));
 app.use("/api/field",          require("./routes/field"));
 app.use("/api/scoring",        require("./routes/scoring"));
 app.use("/api/documents",      require("./routes/documents"));
+app.use("/api/agents",         require("./routes/agents"));
 
 // ── HEALTH CHECK ──────────────────────────────────────────────────────────────
 app.get("/health", (req, res) => {
