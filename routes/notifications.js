@@ -5,7 +5,7 @@ const supabase = require("../db/supabase");
 
 // GET /api/notifications — list notifications for current user/org
 router.get("/", async (req, res) => {
-  const email = req.headers["x-user-email"];
+  const email = req.userEmail;
   const orgId = req.orgId;
   if (!email && !orgId) return res.status(401).json({ error: "Not authenticated" });
 
@@ -27,7 +27,7 @@ router.get("/", async (req, res) => {
 
 // GET /api/notifications/unread-count
 router.get("/unread-count", async (req, res) => {
-  const email = req.headers["x-user-email"];
+  const email = req.userEmail;
   const orgId = req.orgId;
   if (!email && !orgId) return res.json({ count: 0 });
 
@@ -60,7 +60,7 @@ router.patch("/:id/read", async (req, res) => {
 
 // POST /api/notifications/mark-all-read — mark all as read for this user/org
 router.post("/mark-all-read", async (req, res) => {
-  const email = req.headers["x-user-email"];
+  const email = req.userEmail;
   const orgId = req.orgId;
 
   try {

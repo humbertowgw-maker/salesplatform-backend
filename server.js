@@ -3,6 +3,7 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const rateLimit = require("express-rate-limit");
+const helmet = require("helmet");
 const orgMiddleware = require("./middleware/org");
 const { authMiddleware, requireAuth } = require("./middleware/auth");
 const trialGuard    = require("./middleware/trialGuard");
@@ -16,8 +17,10 @@ const PORT = process.env.PORT || 3001;
 app.set("trust proxy", 1);
 
 // ── MIDDLEWARE ────────────────────────────────────────────────────────────────
-app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
+app.disable("x-powered-by");
+app.use(helmet({ contentSecurityPolicy: false }));
+app.use(express.json({ limit: "1mb" }));
+app.use(express.urlencoded({ extended: false, limit: "1mb" }));
 const ALLOWED_ORIGINS = [
   process.env.FRONTEND_URL,
   process.env.LANDING_URL,
@@ -51,13 +54,22 @@ const callLimiter = rateLimit({
   message: { error: "Call limit reached for this hour." },
 });
 
+const signupLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many signup attempts. Please try again later." },
+});
+app.use("/api/public/signup", signupLimiter);
+
 // Auth middleware — verifies Supabase JWT (non-blocking, enhances security)
 app.use("/api/", authMiddleware);
 // Org middleware — extracts org_id and role for all API routes
 app.use("/api/", orgMiddleware);
 // Block unauthenticated requests on all API routes except webhooks and public org info
 app.use("/api/", (req, res, next) => {
-  const PUBLIC_PREFIXES = ["/webhooks", "/texts/inbound", "/organizations/brand", "/organizations/presets", "/organizations/config", "/hiring/google/callback", "/public"];
+  const PUBLIC_PREFIXES = ["/webhooks", "/texts/inbound", "/organizations/brand", "/organizations/presets", "/hiring/google/callback", "/public"];
   if (PUBLIC_PREFIXES.some(p => req.path === p || req.path.startsWith(p + "/"))) return next();
   requireAuth(req, res, next);
 });

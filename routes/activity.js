@@ -52,7 +52,7 @@ router.post("/", async (req, res) => {
       .from("activity_log")
       .insert({
         org_id:      req.orgId,
-        user_email:  req.headers["x-user-email"] || null,
+        user_email:  req.userEmail || null,
         event_type,
         description: description || null,
         lead_id:     lead_id || null,

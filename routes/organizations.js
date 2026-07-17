@@ -5,8 +5,8 @@ const supabase = require("../db/supabase");
 const { PRESETS, getPreset, buildConfig } = require("../lib/industryPresets");
 
 async function requireOrgAdmin(req, res) {
-  const orgId = req.headers["x-org-id"];
-  const email = req.verifiedEmail || req.headers["x-user-email"];
+  const orgId = req.orgId;
+  const email = req.userEmail;
   if (!orgId || !email) {
     res.status(401).json({ error: "Missing org/user context" });
     return null;
@@ -24,7 +24,7 @@ async function requireOrgAdmin(req, res) {
 
 // GET /api/organizations/me — get current org
 router.get("/me", async (req, res) => {
-  const email = req.headers["x-user-email"];
+  const email = req.userEmail;
   if (!email) return res.status(401).json({ error: "No user email" });
 
   try {
@@ -48,7 +48,9 @@ router.get("/me", async (req, res) => {
 
 // POST /api/organizations — create new org (dealer signup)
 router.post("/", async (req, res) => {
-  const { name, owner_email, dealer_code, user_id, industry_key = "general_crm" } = req.body;
+  const { name, dealer_code, industry_key = "general_crm" } = req.body;
+  const owner_email = req.userEmail;
+  const user_id = req.verifiedUserId;
   if (!name || !owner_email) return res.status(400).json({ error: "name and owner_email required" });
 
   try {
@@ -93,10 +95,8 @@ router.post("/", async (req, res) => {
 
 // GET /api/organizations/all — super admin only
 router.get("/all", async (req, res) => {
-  const email = req.headers["x-user-email"];
   try {
-    const { data: userRole } = await supabase.from("user_roles").select("role").eq("email", email).maybeSingle();
-    if (userRole?.role !== "super_admin") return res.status(403).json({ error: "Super admin only" });
+    if (!req.isSuperAdmin) return res.status(403).json({ error: "Super admin only" });
 
     const { data: orgs } = await supabase
       .from("organizations")
@@ -147,7 +147,7 @@ router.patch("/brand", async (req, res) => {
 
 // GET /api/organizations/config — current tenant app-factory config
 router.get("/config", async (req, res) => {
-  const orgId = req.headers["x-org-id"];
+  const orgId = req.orgId;
   if (!orgId) return res.json(buildConfig());
 
   try {
@@ -215,7 +215,7 @@ router.post("/apply-preset", async (req, res) => {
 
 // POST /api/organizations/me/onboarding-complete — mark onboarding done
 router.post("/me/onboarding-complete", async (req, res) => {
-  const orgId = req.headers["x-org-id"];
+  const orgId = req.orgId;
   if (!orgId) return res.status(401).json({ error: "No org context" });
   try {
     await supabase.from("organizations").update({ onboarding_complete: true }).eq("id", orgId);
@@ -248,7 +248,7 @@ router.post("/feature-requests", async (req, res) => {
       .from("feature_requests")
       .insert({
         org_id: req.orgId,
-        requested_by: req.userEmail || req.headers["x-user-email"] || null,
+        requested_by: req.userEmail || null,
         title,
         description,
         module,

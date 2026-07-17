@@ -147,7 +147,7 @@ router.get("/actions", async (req, res) => {
 
 // POST /api/director/actions/:id/approve
 router.post("/actions/:id/approve", async (req, res) => {
-  const approver = req.userEmail || req.headers["x-user-email"];
+  const approver = req.userEmail;
   try {
     const { data: action } = await supabase
       .from("director_actions").select("*").eq("id", req.params.id).single();
@@ -181,7 +181,7 @@ router.post("/actions/:id/approve", async (req, res) => {
 // POST /api/director/actions/:id/reject
 router.post("/actions/:id/reject", async (req, res) => {
   const { reason } = req.body;
-  const approver = req.userEmail || req.headers["x-user-email"];
+  const approver = req.userEmail;
   try {
     const { data: action } = await supabase
       .from("director_actions").select("*").eq("id", req.params.id).single();

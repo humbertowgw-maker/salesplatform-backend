@@ -38,7 +38,6 @@ router.post("/bland", async (req, res) => {
     has_concatenated: !!payload.concatenated_transcript,
     transcript_length: payload.transcript?.length || 0,
     concatenated_length: payload.concatenated_transcript?.length || 0,
-    recording_url: payload.recording_url,
     answered_by: payload.answered_by,
     keys: Object.keys(payload),
   }));

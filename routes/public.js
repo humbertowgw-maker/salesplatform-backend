@@ -7,9 +7,10 @@ const { getPreset } = require("../lib/industryPresets");
 // POST /api/public/signup — atomic signup: creates Supabase auth user + org + super_admin role
 // No JWT required. Uses service-role admin API to auto-confirm email.
 router.post("/signup", async (req, res) => {
-  const { org_name, email, password, industry_key = "general_crm" } = req.body;
+  const { org_name, password, industry_key = "general_crm" } = req.body;
+  const email = String(req.body.email || "").trim().toLowerCase();
 
-  if (!org_name?.trim() || !email?.trim() || !password?.trim()) {
+  if (!org_name?.trim() || !email || !password?.trim()) {
     return res.status(400).json({ error: "org_name, email, and password are required" });
   }
   if (password.length < 8) {
@@ -29,7 +30,7 @@ router.post("/signup", async (req, res) => {
       if (authErr.message?.toLowerCase().includes("already")) {
         return res.status(409).json({ error: "An account with this email already exists. Please sign in." });
       }
-      return res.status(400).json({ error: authErr.message });
+      return res.status(400).json({ error: "Unable to create account with those details." });
     }
 
     const userId = authData.user?.id;
@@ -73,7 +74,7 @@ router.post("/signup", async (req, res) => {
     res.json({ success: true, org_id: org.id, org_name: org.name });
   } catch (e) {
     console.error("[signup] Error:", e.message);
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: "Signup could not be completed." });
   }
 });
 

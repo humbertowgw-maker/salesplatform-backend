@@ -107,7 +107,7 @@ router.post("/trigger", async (req, res) => {
       rep_name:       repName,
       language:       language,
       status:         "initiated",
-      org_id:         req.orgId || req.headers["x-org-id"] || null,
+      org_id:         req.orgId,
     });
     if (logErr) console.error("CALL_LOGS INSERT FAILED:", logErr.message, JSON.stringify(logErr));
 

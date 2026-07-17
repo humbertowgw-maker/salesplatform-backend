@@ -1,20 +1,32 @@
 const supabase = require("../db/supabase");
+const { selectTenantContext } = require("../lib/tenantContext");
 
 async function orgMiddleware(req, res, next) {
   try {
-    const orgId = req.headers["x-org-id"];
-    // Prefer JWT-verified email (set by auth middleware) over spoofable header
-    const userEmail = req.verifiedEmail || req.headers["x-user-email"];
+    const requestedOrgId = req.headers["x-org-id"];
+    const userEmail = req.verifiedEmail;
 
-    if (orgId && !userEmail) { req.orgId = orgId; return next(); }
-    if (userEmail) {
-      const { data: userRole } = await supabase
-        .from("user_roles").select("org_id, role").eq("email", userEmail).maybeSingle();
-      req.orgId        = orgId || userRole?.org_id || null;
-      req.role         = userRole?.role || "rep";
-      req.isSuperAdmin = userRole?.role === "super_admin";
-      req.userEmail    = userEmail;
+    // Public routes must never gain tenant context from caller-controlled headers.
+    if (!userEmail) return next();
+
+    let query = supabase.from("user_roles").select("org_id, role, email");
+    query = req.verifiedUserId
+      ? query.eq("user_id", req.verifiedUserId)
+      : query.eq("email", userEmail);
+    const { data: userRole, error } = await query.maybeSingle();
+    if (error) throw error;
+    const context = selectTenantContext(userRole, requestedOrgId);
+    if (context.error === "NO_MEMBERSHIP") {
+      return res.status(403).json({ error: "No organization membership" });
     }
+    if (context.error === "ORG_ACCESS_DENIED") {
+      return res.status(403).json({ error: "Organization access denied" });
+    }
+
+    req.orgId = context.orgId;
+    req.role = context.role;
+    req.isSuperAdmin = context.isSuperAdmin;
+    req.userEmail = userEmail;
     next();
   } catch (e) {
     console.warn("Org middleware error:", e.message);

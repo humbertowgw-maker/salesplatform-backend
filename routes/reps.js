@@ -70,7 +70,7 @@ router.patch("/:id", async (req, res) => {
 // POST /api/reps/invite — invite a rep via magic-link email (admin only)
 router.post("/invite", requireAuth, requireAdmin, async (req, res) => {
   const { email, name, redirectTo } = req.body;
-  const orgId = req.headers["x-org-id"] || req.body.org_id;
+  const orgId = req.orgId;
   if (!email) return res.status(400).json({ error: "email is required" });
   if (!orgId) return res.status(400).json({ error: "org context required" });
   try {
