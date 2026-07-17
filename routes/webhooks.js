@@ -3,6 +3,7 @@ const express  = require("express");
 const router   = express.Router();
 const supabase = require("../db/supabase");
 const telegram = require("../lib/telegram");
+const { blandCallUrl, normalizeBlandCallId } = require("../lib/blandCallId");
 
 // Retry wrapper for transient Supabase failures
 async function withRetry(fn, attempts = 3, delayMs = 1000) {
@@ -60,19 +61,20 @@ router.post("/bland", async (req, res) => {
       ? Math.round(Number(payload.call_length) * 60)
       : 0;
 
-  if (!call_id) return; // Malformed webhook
+  const safeCallId = normalizeBlandCallId(call_id);
+  if (!safeCallId) return; // Malformed webhook
 
   // ── Idempotency: skip duplicate deliveries ────────────────────────────────
-  if (_recentlyProcessed.has(call_id)) {
+  if (_recentlyProcessed.has(safeCallId)) {
     console.log(`[webhook] ${call_id} already processing — skipped duplicate`);
     return;
   }
-  _recentlyProcessed.add(call_id);
-  setTimeout(() => _recentlyProcessed.delete(call_id), 5 * 60 * 1000); // expire after 5 min
+  _recentlyProcessed.add(safeCallId);
+  setTimeout(() => _recentlyProcessed.delete(safeCallId), 5 * 60 * 1000); // expire after 5 min
 
   // Check DB-level idempotency: if outcome already recorded, skip fully
   const { data: existingLog } = await supabase
-    .from("call_logs").select("id, outcome").eq("bland_call_id", call_id).maybeSingle();
+    .from("call_logs").select("id, outcome").eq("bland_call_id", safeCallId).maybeSingle();
   if (existingLog?.outcome) {
     console.log(`[webhook] ${call_id} already processed (outcome=${existingLog.outcome}) — skipped`);
     return;
@@ -88,10 +90,10 @@ router.post("/bland", async (req, res) => {
     let finalTranscript = concatenated_transcript || transcript || null;
     let finalRecordingUrl = recording_url || null;
     
-    if (!finalTranscript && call_id && process.env.BLAND_KEY) {
+    if (!finalTranscript && process.env.BLAND_KEY) {
       try {
         const axios = require("axios");
-        const blandRes = await axios.get(`https://us.api.bland.ai/v1/calls/${call_id}`, {
+        const blandRes = await axios.get(blandCallUrl(safeCallId), {
           headers: { authorization: process.env.BLAND_KEY },
           timeout: 10000,
         });

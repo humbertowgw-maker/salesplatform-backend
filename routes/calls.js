@@ -7,6 +7,7 @@ const { checkAndRecord } = require("../lib/usageMeter");
 const { buildCallScript } = require("../lib/callScript");
 const { isWithinCallingWindow } = require("../lib/timezone");
 const { ensureSophiaPathway } = require("../lib/blandPathway");
+const { blandCallUrl, normalizeBlandCallId } = require("../lib/blandCallId");
 
 // POST /api/calls/trigger
 // Body: { lead_id } — pulls lead data, builds script, fires call
@@ -23,6 +24,7 @@ router.post("/trigger", async (req, res) => {
       .from("leads")
       .select(`*, reps(name, phone)`)
       .eq("id", lead_id)
+      .eq("org_id", req.orgId)
       .single();
 
     if (leadErr || !lead) return res.status(404).json({ error: "Lead not found" });
@@ -115,7 +117,8 @@ router.post("/trigger", async (req, res) => {
     await supabase
       .from("leads")
       .update({ status: "Called" })
-      .eq("id", lead_id);
+      .eq("id", lead_id)
+      .eq("org_id", req.orgId);
 
     res.json({
       success:       true,
@@ -129,9 +132,8 @@ router.post("/trigger", async (req, res) => {
       return res.status(err.status).json({ error: err.message });
     }
     console.error("Call trigger error:", err.message);
-    console.error("Bland response:", JSON.stringify(err.response?.data));
-    console.error("Key used (first 20):", blandKey?.slice(0, 20));
-    res.status(500).json({ error: "Failed to trigger call", detail: err.message });
+    console.error("Bland call request failed", { status: err.response?.status });
+    res.status(500).json({ error: "Failed to trigger call" });
   }
 });
 
@@ -156,6 +158,7 @@ router.post("/bulk-trigger", async (req, res) => {
         .from("leads")
         .select(`*, reps(name, phone)`)
         .eq("id", lead_id)
+        .eq("org_id", req.orgId)
         .single();
 
       if (leadErr || !lead || !lead.phone) {
@@ -217,7 +220,8 @@ router.post("/bulk-trigger", async (req, res) => {
         business_name: lead.business_name, rep_name: repName,
         language, status: "initiated", org_id: req.orgId || null,
       });
-      await supabase.from("leads").update({ status: "Called" }).eq("id", lead_id);
+      await supabase.from("leads").update({ status: "Called" })
+        .eq("id", lead_id).eq("org_id", req.orgId);
 
       results.push({ lead_id, status: "triggered", call_id: callId });
     } catch (err) {
@@ -237,11 +241,13 @@ router.post("/bulk-trigger", async (req, res) => {
 router.get("/logs", async (req, res) => {
   const { lead_id, limit = 50 } = req.query;
   try {
+    const safeLimit = Math.min(100, Math.max(1, Number.parseInt(limit, 10) || 50));
     let query = supabase
       .from("call_logs")
       .select("*")
+      .eq("org_id", req.orgId)
       .order("created_at", { ascending: false })
-      .limit(Number(limit));
+      .limit(safeLimit);
 
     if (lead_id) query = query.eq("lead_id", lead_id);
 
@@ -258,13 +264,21 @@ router.get("/:bland_call_id", async (req, res) => {
   const blandKey = process.env.BLAND_KEY || process.env.BLAND_API_KEY;
   if (!blandKey) return res.status(500).json({ error: "Bland.ai API key not configured" });
   try {
-    const blandRes = await axios.get(
-      `https://us.api.bland.ai/v1/calls/${req.params.bland_call_id}`,
-      { headers: { authorization: blandKey } }
-    );
+    const safeId = normalizeBlandCallId(req.params.bland_call_id);
+    const callUrl = blandCallUrl(safeId);
+    if (!callUrl) return res.status(400).json({ error: "Invalid call ID" });
+    const { data: ownedCall, error: ownershipError } = await supabase
+      .from("call_logs").select("id")
+      .eq("bland_call_id", safeId).eq("org_id", req.orgId).maybeSingle();
+    if (ownershipError) throw ownershipError;
+    if (!ownedCall) return res.status(404).json({ error: "Call not found" });
+    const blandRes = await axios.get(callUrl, {
+      headers: { authorization: blandKey }, timeout: 10000,
+    });
     res.json(blandRes.data);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("Call status lookup failed", { status: err.response?.status });
+    res.status(500).json({ error: "Failed to retrieve call status" });
   }
 });
 
