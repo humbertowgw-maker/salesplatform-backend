@@ -1,10 +1,12 @@
 # White-Label AI Sales Platform — Backend
 
-Multi-tenant Node.js API for a configurable sales, workforce, calling, hiring, and business-operations platform.
+In-progress multi-tenant Node.js API for a configurable sales, workforce, calling, hiring, and business-operations platform.
+
+> **Development status:** This is the first public version and is approximately halfway built. Core backend areas and a live frontend preview exist, but workflows, integrations, testing, and production hardening are still incomplete. It should be treated as an active-development preview, not a finished or production-ready product.
 
 **Live frontend:** [salesplatform-frontend.vercel.app](https://salesplatform-frontend.vercel.app)
 
-## What it demonstrates
+## Current implementation scope
 
 - Organization-scoped data access and tenant configuration
 - Industry presets, branding, feature flags, and modular application setup
