@@ -3,6 +3,7 @@ const express  = require("express");
 const router   = express.Router();
 const supabase = require("../db/supabase");
 const { enrichLeadTimezone } = require("../lib/timezone");
+const { tryLocalFirst } = require("../lib/aiProviders");
 
 // GET /api/leads — list all leads (with rep + territory join)
 router.get("/", async (req, res) => {
@@ -233,19 +234,19 @@ router.post("/enrich/:id", async (req, res) => {
     }
 
     // Owner lookup via AI knowledge (no web search needed for common WA restaurants)
-    if (!lead.owner_name && !updates.owner_name && process.env.ANTHROPIC_API_KEY) {
+    if (!lead.owner_name && !updates.owner_name) {
       try {
-        const aiRes = await axios.post(
-          "https://api.anthropic.com/v1/messages",
-          {
-            model: "claude-sonnet-4-6",
-            max_tokens: 150,
-            system: "You are a business intelligence assistant with knowledge of Washington State businesses. Given a business name and address, return the owner's name if you know it with confidence. Return JSON only: { owner_name, confidence } where confidence is low/medium/high. Only return medium or high if you are genuinely confident. Otherwise return { owner_name: null, confidence: 'low' }. Do not guess.",
-            messages: [{ role: "user", content: `Business: ${lead.business_name}\nAddress: ${lead.address || ''}\nCity: ${lead.city || ''}, WA\nPhone: ${lead.phone || ''}` }],
-          },
-          { headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" }, timeout: 15000 }
-        );
-        const text = aiRes.data?.content?.[0]?.text || "{}";
+        const ownerSystem = "You are a business intelligence assistant with knowledge of Washington State businesses. Given a business name and address, return the owner's name if you know it with confidence. Return JSON only: { owner_name, confidence } where confidence is low/medium/high. Only return medium or high if you are genuinely confident. Otherwise return { owner_name: null, confidence: 'low' }. Do not guess.";
+        const ownerPrompt = `Business: ${lead.business_name}\nAddress: ${lead.address || ''}\nCity: ${lead.city || ''}, WA\nPhone: ${lead.phone || ''}`;
+        const text = await tryLocalFirst({ system: ownerSystem, prompt: ownerPrompt, maxTokens: 150, timeoutMs: 15000 }, async () => {
+          if (!process.env.ANTHROPIC_API_KEY) throw new Error("Anthropic not configured");
+          const aiRes = await axios.post(
+            "https://api.anthropic.com/v1/messages",
+            { model: "claude-sonnet-4-6", max_tokens: 150, system: ownerSystem, messages: [{ role: "user", content: ownerPrompt }] },
+            { headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" }, timeout: 15000 }
+          );
+          return aiRes.data?.content?.[0]?.text || "{}";
+        });
         try {
           const parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
           if (parsed.owner_name && parsed.confidence !== "low") {

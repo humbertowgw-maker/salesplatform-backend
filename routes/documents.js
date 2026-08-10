@@ -5,6 +5,7 @@ const axios    = require("axios");
 const router   = express.Router();
 const supabase = require("../db/supabase");
 const { checkAndRecord } = require("../lib/usageMeter");
+const { tryLocalFirst, tryLocalFirstVision } = require("../lib/aiProviders");
 
 async function analyzeWithClaude({ content, documentType, industry, customerType, instructions }) {
   const systemPrompt = `You are an intelligent document analyzer for a ${industry || "sales"} company. Extract key information and provide actionable insights for the sales team.`;
@@ -26,25 +27,14 @@ Return a JSON object with:
   "opportunity_score": 1-10
 }`;
 
-  const res = await axios.post(
-    "https://api.anthropic.com/v1/messages",
-    {
-      model: "claude-sonnet-4-6",
-      max_tokens: 1000,
-      system: systemPrompt,
-      messages: [{ role: "user", content: userPrompt }],
-    },
-    {
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": process.env.ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-      },
-      timeout: 30000,
-    }
-  );
-
-  const text = res.data?.content?.[0]?.text || "{}";
+  const text = await tryLocalFirst({ system: systemPrompt, prompt: userPrompt, maxTokens: 1000, timeoutMs: 30000 }, async () => {
+    const res = await axios.post(
+      "https://api.anthropic.com/v1/messages",
+      { model: "claude-sonnet-4-6", max_tokens: 1000, system: systemPrompt, messages: [{ role: "user", content: userPrompt }] },
+      { headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" }, timeout: 30000 }
+    );
+    return res.data?.content?.[0]?.text || "{}";
+  });
   return JSON.parse(text.replace(/```json|```/g, "").trim());
 }
 
@@ -113,38 +103,27 @@ router.post("/analyze-image", async (req, res) => {
     const customerType = org.custom_wording?.customerSingular || "customer";
 
     const systemPrompt = `You are an intelligent document analyzer for a ${industry} company. Extract key information from this document image and provide actionable insights for the sales team.`;
+    const docVisionPrompt = `${systemPrompt}\n\nDocument type: ${document_type || "unknown"}\nCustomer type: ${customerType}\n${instructions ? `Instructions: ${instructions}\n` : ""}\nAnalyze this document and return JSON:\n{"summary":"...","key_data":{},"action_items":[],"signals":[],"risk_flags":[],"opportunity_score":1-10}`;
 
-    const aiRes = await axios.post(
-      "https://api.anthropic.com/v1/messages",
-      {
-        model: "claude-sonnet-4-6",
-        max_tokens: 1000,
-        system: systemPrompt,
-        messages: [{
-          role: "user",
-          content: [
-            {
-              type: "image",
-              source: { type: "base64", media_type, data: image_base64 },
-            },
-            {
-              type: "text",
-              text: `Document type: ${document_type || "unknown"}\nCustomer type: ${customerType}\n${instructions ? `Instructions: ${instructions}\n` : ""}\nAnalyze this document and return JSON:\n{"summary":"...","key_data":{},"action_items":[],"signals":[],"risk_flags":[],"opportunity_score":1-10}`,
-            },
-          ],
-        }],
-      },
-      {
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": process.env.ANTHROPIC_API_KEY,
-          "anthropic-version": "2023-06-01",
+    const text = await tryLocalFirstVision({ prompt: docVisionPrompt, imageBase64: image_base64, mediaType: media_type, maxTokens: 1000 }, async () => {
+      const aiRes = await axios.post(
+        "https://api.anthropic.com/v1/messages",
+        {
+          model: "claude-sonnet-4-6",
+          max_tokens: 1000,
+          system: systemPrompt,
+          messages: [{
+            role: "user",
+            content: [
+              { type: "image", source: { type: "base64", media_type, data: image_base64 } },
+              { type: "text", text: `Document type: ${document_type || "unknown"}\nCustomer type: ${customerType}\n${instructions ? `Instructions: ${instructions}\n` : ""}\nAnalyze this document and return JSON:\n{"summary":"...","key_data":{},"action_items":[],"signals":[],"risk_flags":[],"opportunity_score":1-10}` },
+            ],
+          }],
         },
-        timeout: 30000,
-      }
-    );
-
-    const text     = aiRes.data?.content?.[0]?.text || "{}";
+        { headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" }, timeout: 30000 }
+      );
+      return aiRes.data?.content?.[0]?.text || "{}";
+    });
     const analysis = JSON.parse(text.replace(/```json|```/g, "").trim());
 
     const { data, error } = await supabase

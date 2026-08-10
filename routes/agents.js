@@ -4,6 +4,7 @@ const axios    = require("axios");
 const router   = express.Router();
 const supabase = require("../db/supabase");
 const { ensureSophiaPathway, updateSophiaPathway, buildSophiaPathwaySpec, clearPathwayCache } = require("../lib/blandPathway");
+const { tryLocalFirst } = require("../lib/aiProviders");
 
 // ── GET /api/agents — list all agents ────────────────────────────────────────
 router.get("/", async (req, res) => {
@@ -271,24 +272,14 @@ Return ONLY valid JSON (no markdown, no explanation) matching this schema:
   "suggested_cron": "string or null"
 }`;
 
-    const aiRes = await axios.post(
-      "https://api.anthropic.com/v1/messages",
-      {
-        model:      "claude-sonnet-4-6",
-        max_tokens: 1024,
-        messages:   [{ role: "user", content: prompt }],
-      },
-      {
-        headers: {
-          "Content-Type":    "application/json",
-          "x-api-key":       process.env.ANTHROPIC_API_KEY,
-          "anthropic-version": "2023-06-01",
-        },
-        timeout: 30000,
-      }
-    );
-
-    const text = aiRes.data?.content?.[0]?.text || "{}";
+    const text = await tryLocalFirst({ prompt, maxTokens: 1024, timeoutMs: 30000 }, async () => {
+      const aiRes = await axios.post(
+        "https://api.anthropic.com/v1/messages",
+        { model: "claude-sonnet-4-6", max_tokens: 1024, messages: [{ role: "user", content: prompt }] },
+        { headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" }, timeout: 30000 }
+      );
+      return aiRes.data?.content?.[0]?.text || "{}";
+    });
     let buildPlan;
     try {
       buildPlan = JSON.parse(text.replace(/```json|```/g, "").trim());

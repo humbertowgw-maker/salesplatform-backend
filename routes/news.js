@@ -6,26 +6,29 @@ const router  = express.Router();
 const supabase = require("../db/supabase");
 const { checkAndRecord } = require("../lib/usageMeter");
 const { AI_AGENT_NAME } = require("../lib/brand");
+const { tryLocalFirst } = require("../lib/aiProviders");
 
 async function askClaude(system, userMsg, maxTokens = 800) {
-  const res = await axios.post(
-    "https://api.anthropic.com/v1/messages",
-    {
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: maxTokens,
-      system,
-      messages: [{ role: "user", content: userMsg }],
-    },
-    {
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": process.env.ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
+  return tryLocalFirst({ system, prompt: userMsg, maxTokens, timeoutMs: 20000 }, async () => {
+    const res = await axios.post(
+      "https://api.anthropic.com/v1/messages",
+      {
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: maxTokens,
+        system,
+        messages: [{ role: "user", content: userMsg }],
       },
-      timeout: 20000,
-    }
-  );
-  return res.data?.content?.[0]?.text || "";
+      {
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": process.env.ANTHROPIC_API_KEY,
+          "anthropic-version": "2023-06-01",
+        },
+        timeout: 20000,
+      }
+    );
+    return res.data?.content?.[0]?.text || "";
+  });
 }
 
 async function getOrgConfig(orgId) {

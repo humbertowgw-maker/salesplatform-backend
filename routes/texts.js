@@ -5,6 +5,7 @@ const supabase = require("../db/supabase");
 const axios   = require("axios");
 const { checkAndRecord } = require("../lib/usageMeter");
 const { AI_AGENT_NAME } = require("../lib/brand");
+const { tryLocalFirst } = require("../lib/aiProviders");
 
 function validateTwilioSignature(req, res, next) {
   const authToken = process.env.TWILIO_AUTH_TOKEN;
@@ -186,8 +187,6 @@ function buildFirstText({ businessName, ownerName, city, currentProvider }) {
 }
 
 async function generateAIReply({ inboundMessage, lead, history }) {
-  if (!process.env.ANTHROPIC_API_KEY) return null;
-
   const msg = inboundMessage.toLowerCase().trim();
 
   // Instant opt-out — never reply after STOP
@@ -200,25 +199,19 @@ async function generateAIReply({ inboundMessage, lead, history }) {
     }));
     conversationHistory.push({ role: "user", content: inboundMessage });
 
-    const res = await axios.post(
-      "https://api.anthropic.com/v1/messages",
-      {
-        model:      "claude-sonnet-4-6",
-        max_tokens: 200,
-        system:     `You are ${AI_AGENT_NAME}, a friendly AI outreach assistant. You're texting with ${lead?.owner_name || "a business owner"} at ${lead?.business_name || "their business"} in ${lead?.city || "their city"}. Your goal is to book an in-person appointment with their local rep Monday–Saturday. Keep replies SHORT (1–2 sentences max). Be warm, natural, never pushy. If they want to book, confirm a day and time. If they say no or ask to stop, thank them and end the conversation.`,
-        messages:   conversationHistory,
-      },
-      {
-        headers: {
-          "Content-Type":      "application/json",
-          "x-api-key":         process.env.ANTHROPIC_API_KEY,
-          "anthropic-version": "2023-06-01",
-        },
-        timeout: 10000,
-      }
-    );
+    const replySystem = `You are ${AI_AGENT_NAME}, a friendly AI outreach assistant. You're texting with ${lead?.owner_name || "a business owner"} at ${lead?.business_name || "their business"} in ${lead?.city || "their city"}. Your goal is to book an in-person appointment with their local rep Monday–Saturday. Keep replies SHORT (1–2 sentences max). Be warm, natural, never pushy. If they want to book, confirm a day and time. If they say no or ask to stop, thank them and end the conversation.`;
 
-    return res.data?.content?.[0]?.text?.trim() || null;
+    const text = await tryLocalFirst({ system: replySystem, messages: conversationHistory, maxTokens: 200, timeoutMs: 15000 }, async () => {
+      if (!process.env.ANTHROPIC_API_KEY) throw new Error("Anthropic not configured");
+      const res = await axios.post(
+        "https://api.anthropic.com/v1/messages",
+        { model: "claude-sonnet-4-6", max_tokens: 200, system: replySystem, messages: conversationHistory },
+        { headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" }, timeout: 10000 }
+      );
+      return res.data?.content?.[0]?.text?.trim() || null;
+    });
+
+    return text;
   } catch (e) {
     console.warn("AI reply failed:", e.message);
     return null;

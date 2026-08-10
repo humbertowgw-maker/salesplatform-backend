@@ -4,6 +4,7 @@ const axios    = require("axios");
 const router   = express.Router();
 const supabase = require("../db/supabase");
 const { checkAndRecord } = require("../lib/usageMeter");
+const { tryLocalFirst } = require("../lib/aiProviders");
 
 const DEFAULT_WEIGHTS = {
   has_phone:           20,
@@ -129,28 +130,16 @@ router.post("/ai-prioritize", async (req, res) => {
     const industry = org.industry_name || "Sales";
     const wording  = org.custom_wording || {};
 
-    const aiRes = await axios.post(
-      "https://api.anthropic.com/v1/messages",
-      {
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 1000,
-        system: `You are a ${industry} sales prioritization AI. Score each lead 1-10 for outreach priority. Consider completeness of info, status, business type, and opportunity signals. Return JSON array only.`,
-        messages: [{
-          role: "user",
-          content: `Industry: ${industry}\nCustomer type: ${wording.customerPlural || "customers"}\n\nScore these ${wording.leadPlural || "leads"}:\n${JSON.stringify(leads)}\n\nReturn: [{ id, priorityScore (1-10), reason (1 sentence), bestTimeToReach }]`
-        }],
-      },
-      {
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": process.env.ANTHROPIC_API_KEY,
-          "anthropic-version": "2023-06-01",
-        },
-        timeout: 15000,
-      }
-    );
-
-    const text   = aiRes.data?.content?.[0]?.text || "[]";
+    const scoringSystem = `You are a ${industry} sales prioritization AI. Score each lead 1-10 for outreach priority. Consider completeness of info, status, business type, and opportunity signals. Return JSON array only.`;
+    const scoringPrompt = `Industry: ${industry}\nCustomer type: ${wording.customerPlural || "customers"}\n\nScore these ${wording.leadPlural || "leads"}:\n${JSON.stringify(leads)}\n\nReturn: [{ id, priorityScore (1-10), reason (1 sentence), bestTimeToReach }]`;
+    const text = await tryLocalFirst({ system: scoringSystem, prompt: scoringPrompt, maxTokens: 1000, timeoutMs: 15000 }, async () => {
+      const aiRes = await axios.post(
+        "https://api.anthropic.com/v1/messages",
+        { model: "claude-haiku-4-5-20251001", max_tokens: 1000, system: scoringSystem, messages: [{ role: "user", content: scoringPrompt }] },
+        { headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" }, timeout: 15000 }
+      );
+      return aiRes.data?.content?.[0]?.text || "[]";
+    });
     const scored = JSON.parse(text.replace(/```json|```/g, "").trim());
 
     await Promise.all(scored.map(s =>

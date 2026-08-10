@@ -4,6 +4,7 @@ const router   = express.Router();
 const supabase = require("../db/supabase");
 const { makeOAuthClient, getOrgClients, SCOPES } = require("../lib/hiringCalendar");
 const { PLATFORM_NAME } = require("../lib/brand");
+const { tryLocalFirst } = require("../lib/aiProviders");
 
 // ── Applicants CRUD ───────────────────────────────────────────────────────────
 
@@ -128,24 +129,23 @@ router.post("/applicants/:id/send-offer", async (req, res) => {
     .from("organizations").select("name").eq("id", req.orgId).maybeSingle();
   const orgName = org?.name || PLATFORM_NAME;
 
-  // Generate offer letter via Claude
+  // Generate offer letter — local first, Claude fallback
   let offerLetter;
-  if (process.env.ANTHROPIC_API_KEY) {
-    try {
+  try {
+    const offerPrompt = `Write a brief, warm offer letter for a ${applicant.position || "Sales Representative"} position at ${orgName}. Candidate name: ${applicant.name}. Under 180 words. Start with "Dear ${applicant.name.split(" ")[0]}," and end with "${orgName} Hiring Team". Professional, no salary details.`;
+    offerLetter = await tryLocalFirst({ prompt: offerPrompt, maxTokens: 500 }, async () => {
+      if (!process.env.ANTHROPIC_API_KEY) throw new Error("Anthropic not configured");
       const Anthropic = require("@anthropic-ai/sdk");
       const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
       const msg = await client.messages.create({
         model: "claude-haiku-4-5-20251001",
         max_tokens: 500,
-        messages: [{
-          role: "user",
-          content: `Write a brief, warm offer letter for a ${applicant.position || "Sales Representative"} position at ${orgName}. Candidate name: ${applicant.name}. Under 180 words. Start with "Dear ${applicant.name.split(" ")[0]}," and end with "${orgName} Hiring Team". Professional, no salary details.`,
-        }],
+        messages: [{ role: "user", content: offerPrompt }],
       });
-      offerLetter = msg.content[0]?.text || null;
-    } catch (e) {
-      console.warn("[hiring] Claude offer letter failed:", e.message);
-    }
+      return msg.content[0]?.text || "";
+    });
+  } catch (e) {
+    console.warn("[hiring] offer letter generation failed:", e.message);
   }
 
   if (!offerLetter) {

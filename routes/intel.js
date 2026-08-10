@@ -5,6 +5,7 @@ const router   = express.Router();
 const supabase = require("../db/supabase");
 const { checkAndRecord } = require("../lib/usageMeter");
 const { AI_AGENT_NAME } = require("../lib/brand");
+const { tryLocalFirst } = require("../lib/aiProviders");
 
 // POST /api/intel/prioritize
 router.post("/prioritize", async (req, res) => {
@@ -19,16 +20,16 @@ router.post("/prioritize", async (req, res) => {
       .in("id", lead_ids);
     if (!leads?.length) return res.status(404).json({ error: "No leads found" });
     await checkAndRecord(req.orgId, "ai_message", { endpoint: "prioritize", lead_count: leads.length });
-    const aiRes = await axios.post(
-      "https://api.anthropic.com/v1/messages",
-      {
-        model: "claude-sonnet-4-20250514", max_tokens: 1000,
-        system: "B2B sales prioritization AI. Score each lead 1-10 for outreach priority. Return JSON array only: [{ id, priorityScore, reason, estimatedLines, bestTimeToCall }]",
-        messages: [{ role: "user", content: `Score these leads:\n${JSON.stringify(leads)}` }],
-      },
-      { headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" }, timeout: 15000 }
-    );
-    const text = aiRes.data?.content?.[0]?.text || "[]";
+    const prioritizeSystem = "B2B sales prioritization AI. Score each lead 1-10 for outreach priority. Return JSON array only: [{ id, priorityScore, reason, estimatedLines, bestTimeToCall }]";
+    const prioritizePrompt = `Score these leads:\n${JSON.stringify(leads)}`;
+    const text = await tryLocalFirst({ system: prioritizeSystem, prompt: prioritizePrompt, maxTokens: 1000, timeoutMs: 15000 }, async () => {
+      const aiRes = await axios.post(
+        "https://api.anthropic.com/v1/messages",
+        { model: "claude-sonnet-4-20250514", max_tokens: 1000, system: prioritizeSystem, messages: [{ role: "user", content: prioritizePrompt }] },
+        { headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" }, timeout: 15000 }
+      );
+      return aiRes.data?.content?.[0]?.text || "[]";
+    });
     const scored = JSON.parse(text.replace(/```json|```/g, "").trim());
     await Promise.all(scored.map(s => supabase.from("leads").update({ priority_score: s.priorityScore }).eq("id", s.id)));
     res.json({ scored, total: scored.length });
@@ -40,16 +41,16 @@ router.post("/script", async (req, res) => {
   const { businessType, currentProvider, city, painPoint } = req.body;
   try {
     await checkAndRecord(req.orgId, "ai_message", { endpoint: "script" });
-    const aiRes = await axios.post(
-      "https://api.anthropic.com/v1/messages",
-      {
-        model: "claude-sonnet-4-20250514", max_tokens: 800,
-        system: "Write natural B2B cold call scripts. Return JSON only: { opener, bridge, pivot, objectionHandlers: { busy, happy, noInterest, costQuestion }, close }",
-        messages: [{ role: "user", content: `Business: ${businessType}\nProvider: ${currentProvider}\nCity: ${city}\nPain point: ${painPoint}` }],
-      },
-      { headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" }, timeout: 12000 }
-    );
-    const text = aiRes.data?.content?.[0]?.text || "{}";
+    const scriptSystem = "Write natural B2B cold call scripts. Return JSON only: { opener, bridge, pivot, objectionHandlers: { busy, happy, noInterest, costQuestion }, close }";
+    const scriptPrompt = `Business: ${businessType}\nProvider: ${currentProvider}\nCity: ${city}\nPain point: ${painPoint}`;
+    const text = await tryLocalFirst({ system: scriptSystem, prompt: scriptPrompt, maxTokens: 800, timeoutMs: 12000 }, async () => {
+      const aiRes = await axios.post(
+        "https://api.anthropic.com/v1/messages",
+        { model: "claude-sonnet-4-20250514", max_tokens: 800, system: scriptSystem, messages: [{ role: "user", content: scriptPrompt }] },
+        { headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" }, timeout: 12000 }
+      );
+      return aiRes.data?.content?.[0]?.text || "{}";
+    });
     res.json(JSON.parse(text.replace(/```json|```/g, "").trim()));
   } catch (err) { res.status(err.status || 500).json({ error: err.message }); }
 });
@@ -63,16 +64,16 @@ router.post("/fcc", async (req, res) => {
     const providerList = providers
       .map(p => `${p.brand_name}: ${p.technology_description}, ↓${p.max_advertised_download_speed}Mbps ↑${p.max_advertised_upload_speed}Mbps`)
       .join("\n");
-    const aiRes = await axios.post(
-      "https://api.anthropic.com/v1/messages",
-      {
-        model: "claude-sonnet-4-20250514", max_tokens: 600,
-        system: "B2B sales strategist. Return JSON only: { summary, talkingPoints: [3 strings], primaryCompetitor, angle, competitiveScore }",
-        messages: [{ role: "user", content: `Address: ${address}\n\nProviders:\n${providerList}\n\nGive B2B competitive sales intel.` }],
-      },
-      { headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" }, timeout: 15000 }
-    );
-    const text = aiRes.data?.content?.[0]?.text || "{}";
+    const fccIntelSystem = "B2B sales strategist. Return JSON only: { summary, talkingPoints: [3 strings], primaryCompetitor, angle, competitiveScore }";
+    const fccIntelPrompt = `Address: ${address}\n\nProviders:\n${providerList}\n\nGive B2B competitive sales intel.`;
+    const text = await tryLocalFirst({ system: fccIntelSystem, prompt: fccIntelPrompt, maxTokens: 600, timeoutMs: 15000 }, async () => {
+      const aiRes = await axios.post(
+        "https://api.anthropic.com/v1/messages",
+        { model: "claude-sonnet-4-20250514", max_tokens: 600, system: fccIntelSystem, messages: [{ role: "user", content: fccIntelPrompt }] },
+        { headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" }, timeout: 15000 }
+      );
+      return aiRes.data?.content?.[0]?.text || "{}";
+    });
     res.json(JSON.parse(text.replace(/```json|```/g, "").trim()));
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
