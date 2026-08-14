@@ -9,17 +9,17 @@
     "test": "node --test"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.112.0",
+    "@supabase/supabase-js": "^2.112.3",
     "axios": "^1.6.0",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^5.2.1",
     "express-rate-limit": "^8.6.2",
-    "googleapis": "^174.0.0",
+    "googleapis": "^174.0.1",
     "helmet": "^8.3.0",
-    "stripe": "^22.4.0",
-    "twilio": "^6.0.2",
-    "ws": "^8.21.2"
+    "stripe": "^22.5.0",
+    "twilio": "^6.1.0",
+    "ws": "^8.21.3"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"
