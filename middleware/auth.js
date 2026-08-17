@@ -1,6 +1,8 @@
 // middleware/auth.js — Supabase JWT verification
-// Verifies Authorization: Bearer <token> and sets req.verifiedEmail / req.verifiedUserId
-// Non-blocking: missing or invalid JWT falls through (existing header-based auth still works)
+// Verifies Authorization: Bearer <token> and sets req.verifiedEmail / req.verifiedUserId.
+// Non-blocking: missing or invalid JWT just leaves those unset, and
+// orgMiddleware (middleware/org.js) no-ops without a verified identity — no
+// other auth path exists.
 const supabase = require("../db/supabase");
 
 async function authMiddleware(req, res, next) {
@@ -14,7 +16,7 @@ async function authMiddleware(req, res, next) {
         req.verifiedUserId = user.id;
       }
     } catch (e) {
-      // Invalid token — ignore, fall through to header-based auth
+      // Invalid token — ignore, req.verifiedEmail stays unset
     }
   }
   next();
