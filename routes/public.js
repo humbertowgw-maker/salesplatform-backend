@@ -3,6 +3,93 @@ const express  = require("express");
 const router   = express.Router();
 const supabase = require("../db/supabase");
 const { getPreset } = require("../lib/industryPresets");
+const { sendMail, orgAdminEmails, notifyOrg } = require("../lib/mailer");
+
+const PLATFORM_LABELS = {
+  sales_platform: "WGW Sales Platform",
+  sales_trainer:  "Sales Trainer",
+  phone_agent:    "Phone Agent desk (Sophia)",
+  other:          "Other",
+};
+
+// POST /api/public/request-access — self-serve access request from the sign-in page.
+// No auth. Records the request, emails the requester a confirmation, and notifies
+// the director/admins so they can approve and onboard end-to-end.
+router.post("/request-access", async (req, res) => {
+  const name    = String(req.body.name || "").trim();
+  const email   = String(req.body.email || "").trim().toLowerCase();
+  const phone   = String(req.body.phone || "").trim() || null;
+  const platform = PLATFORM_LABELS[req.body.platform] ? req.body.platform : "sales_platform";
+  const note    = String(req.body.note || "").trim() || null;
+
+  if (!name || !email) return res.status(400).json({ error: "name and email are required" });
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: "Enter a valid email address" });
+
+  try {
+    // Target org: explicit env, else the first organization (single-company deployments).
+    let orgId = process.env.DEFAULT_ORG_ID || null;
+    if (!orgId) {
+      const { data: org } = await supabase.from("organizations").select("id,name").limit(1).maybeSingle();
+      orgId = org?.id || null;
+    }
+
+    // One open request per email — treat repeats as a friendly ping.
+    const { data: existing } = await supabase
+      .from("access_requests")
+      .select("id,status")
+      .eq("email", email)
+      .eq("status", "pending")
+      .maybeSingle();
+
+    if (!existing) {
+      const { error } = await supabase
+        .from("access_requests")
+        .insert({ org_id: orgId, name, email, phone, platform, note });
+      if (error) throw new Error(error.message);
+    }
+
+    const label = PLATFORM_LABELS[platform];
+
+    // 1. Confirmation to the requester.
+    await sendMail({
+      orgId,
+      to: email,
+      subject: "We received your White Glove Wireless access request",
+      text: `Hi ${name.split(" ")[0]},<br/><br/>
+        We received your request for access to <strong>${label}</strong>.<br/>
+        The director and our team have been notified and will review it shortly.<br/><br/>
+        Next steps:<br/>
+        1. A team lead approves your request.<br/>
+        2. You get a welcome email with a link to create your password.<br/>
+        3. You sign in and complete a short onboarding (personal info, tax forms, ID).<br/><br/>
+        Questions? Just reply to reach the team.` ,
+    });
+
+    if (orgId) {
+      // 2. Notify director + admins in-app and by email.
+      const adminEmails = await orgAdminEmails(orgId);
+      await notifyOrg(orgId, {
+        title: `Access request: ${name}`,
+        body: `${email} requested ${label} access.${phone ? ` Phone: ${phone}.` : ""} Approve under Reps → Onboarding.`,
+        type: "action",
+        link: "/Reps",
+      });
+      for (const adminEmail of adminEmails) {
+        await sendMail({
+          orgId,
+          to: adminEmail,
+          subject: `🔔 New access request — ${name} (${label})`,
+          text: `<strong>${name}</strong> (${email}${phone ? `, ${phone}` : ""}) requested <strong>${label}</strong> access.${note ? `<br/>Note: ${note}` : ""}<br/><br/>Approve or deny it under <strong>Reps → Onboarding</strong>. Approving automatically creates their account and sends the welcome email.`,
+        });
+      }
+    }
+
+    res.json({ success: true, message: "Request received" });
+  } catch (e) {
+    console.error("[public] request-access error:", e.message);
+    res.status(500).json({ error: "Could not submit your request right now." });
+  }
+});
 
 // POST /api/public/signup — atomic signup: creates Supabase auth user + org + super_admin role
 // No JWT required. Uses service-role admin API to auto-confirm email.
