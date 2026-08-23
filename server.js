@@ -104,7 +104,6 @@ app.use("/api/scoring",        require("./routes/scoring"));
 app.use("/api/documents",      require("./routes/documents"));
 app.use("/api/agents",         require("./routes/agents"));
 app.use("/api/hiring",         require("./routes/hiring"));
-app.use("/api/onboarding",     require("./routes/onboarding"));
 app.use("/api/public",         require("./routes/public"));
 
 // ── HEALTH CHECK ──────────────────────────────────────────────────────────────
