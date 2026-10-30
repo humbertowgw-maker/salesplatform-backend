@@ -17,7 +17,7 @@
     "express-rate-limit": "^8.7.1",
     "googleapis": "^174.0.1",
     "helmet": "^8.3.0",
-    "stripe": "^22.6.2",
+    "stripe": "^23.0.1",
     "twilio": "^6.2.0",
     "ws": "^8.22.0"
   },
